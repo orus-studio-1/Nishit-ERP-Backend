@@ -13,7 +13,7 @@ import { computeEffectiveAccess, ensureCompanyDefaultRoles } from '../utils/acce
 import { generateEmployeeId } from '../utils/generate';
 import { passwordValidationMessage } from '../utils/password';
 
-const REFRESH_COOKIE = 'rishit_refresh';
+const REFRESH_COOKIE = 'nishit_refresh';
 const LEGACY_REFRESH_COOKIE = 'orus_refresh';
 const REFRESH_DAYS = Number(process.env.REFRESH_TOKEN_DAYS || 30);
 const sha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
@@ -64,9 +64,9 @@ export const register = async (req: Request, res: Response) => {
       let tenant;
       let branch;
       if (!company) {
-        const companyName = process.env.ERP_COMPANY_NAME || 'Rishit ERP';
-        tenant = await tx.tenant.create({ data: { name: companyName, slug: 'rishit-erp', baseCurrency: 'INR' } });
-        company = await tx.company.create({ data: { tenantId: tenant.id, name: companyName, slug: 'rishit-erp', legalName: companyName, email, phone, country: 'IN', currency: 'INR' } });
+        const companyName = process.env.ERP_COMPANY_NAME || 'Nishit ERP';
+        tenant = await tx.tenant.create({ data: { name: companyName, slug: 'nishit-erp', baseCurrency: 'INR' } });
+        company = await tx.company.create({ data: { tenantId: tenant.id, name: companyName, slug: 'nishit-erp', legalName: companyName, email, phone, country: 'IN', currency: 'INR' } });
         branch = await tx.branch.create({ data: { tenantId: tenant.id, companyId: company.id, code: 'MAIN', name: 'Main Branch' } });
       } else {
         tenant = await tx.tenant.findUniqueOrThrow({ where: { id: company.tenantId } });
@@ -185,7 +185,7 @@ export const logoutAll = async (req: AuthRequest, res: Response) => { await pris
 export const forgotPassword = async (req: Request, res: Response) => { const user = await prisma.user.findFirst({ where: { email: { equals: String(req.body.email || '').trim().toLowerCase(), mode: 'insensitive' } } }); let resetToken: string | undefined; if (user) { resetToken = randomToken(); await prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash: sha256(resetToken), expiresAt: new Date(Date.now() + 15 * 60000) } }); } return success(res, process.env.NODE_ENV === 'production' ? null : { resetToken }, 'If the account exists, reset instructions have been issued'); };
 export const resetPassword = async (req: Request, res: Response) => { const invalid = passwordValidationMessage(req.body.password); if (invalid) return error(res, invalid, 400, undefined, 'VALIDATION_ERROR'); const row = await prisma.passwordResetToken.findUnique({ where: { tokenHash: sha256(String(req.body.token || '')) } }); if (!row || row.consumedAt || row.expiresAt <= new Date()) return error(res, 'Reset token is invalid or expired', 400, undefined, 'RESET_TOKEN_INVALID'); await prisma.$transaction([prisma.user.update({ where: { id: row.userId }, data: { password: await hashPassword(req.body.password), passwordChangedAt: new Date(), tokenVersion: { increment: 1 } } }), prisma.passwordResetToken.update({ where: { id: row.id }, data: { consumedAt: new Date() } }), prisma.refreshSession.updateMany({ where: { userId: row.userId, revokedAt: null }, data: { revokedAt: new Date(), revokeReason: 'PASSWORD_RESET' } })]); return success(res, null, 'Password reset; all sessions revoked'); };
 
-export const enrollTwoFactor = async (req: AuthRequest, res: Response) => { const secret = generateSecret(); await prisma.user.update({ where: { id: req.user!.id }, data: { twoFactorSecret: secret, twoFactorEnabled: false } }); const uri = generateURI({ issuer: 'Rishit ERP', label: req.user!.email, secret }); return success(res, { secret, uri, qrDataUrl: await QRCode.toDataURL(uri) }, 'Scan and verify to enable two-factor authentication'); };
+export const enrollTwoFactor = async (req: AuthRequest, res: Response) => { const secret = generateSecret(); await prisma.user.update({ where: { id: req.user!.id }, data: { twoFactorSecret: secret, twoFactorEnabled: false } }); const uri = generateURI({ issuer: 'Nishit ERP', label: req.user!.email, secret }); return success(res, { secret, uri, qrDataUrl: await QRCode.toDataURL(uri) }, 'Scan and verify to enable two-factor authentication'); };
 export const enableTwoFactor = async (req: AuthRequest, res: Response) => { const user = await prisma.user.findUnique({ where: { id: req.user!.id } }); if (!user?.twoFactorSecret || !(await verifyOtp({ secret: user.twoFactorSecret, token: String(req.body.code || '') })).valid) return error(res, 'Invalid verification code', 400, undefined, 'TWO_FACTOR_INVALID'); const codes = Array.from({ length: 10 }, () => crypto.randomBytes(5).toString('hex').toUpperCase()); await prisma.$transaction(async (tx: any) => { await tx.twoFactorRecoveryCode.deleteMany({ where: { userId: user.id } }); await tx.twoFactorRecoveryCode.createMany({ data: codes.map((code) => ({ userId: user.id, codeHash: sha256(code) })) }); await tx.user.update({ where: { id: user.id }, data: { twoFactorEnabled: true } }); }); return success(res, { recoveryCodes: codes }, 'Two-factor authentication enabled'); };
 
 export const getSessions = async (req: AuthRequest, res: Response) => success(res, await prisma.refreshSession.findMany({ where: { userId: req.user!.id, revokedAt: null, expiresAt: { gt: new Date() } }, select: { id: true, companyId: true, branchId: true, userAgent: true, ip: true, createdAt: true, lastUsedAt: true, expiresAt: true }, orderBy: { createdAt: 'desc' } }));

@@ -168,7 +168,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 const PORT = Number(process.env.PORT || 5000);
 const HOST = process.env.HOST || '0.0.0.0';
 const server = app.listen(PORT, HOST, () => {
-  console.log(`Rishit ERP Server running at http://${HOST}:${PORT}`);
+  console.log(`Nishit ERP Server running at http://${HOST}:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV}`);
 });
 
