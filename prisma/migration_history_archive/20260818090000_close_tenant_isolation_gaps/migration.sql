@@ -1,0 +1,57 @@
+ALTER TABLE "CostCenter" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "ProductUomConversion" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "ProductAttribute" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "ProductAttributeValue" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "PeriodClosingVoucher" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "FixedAsset" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "JournalEntryTemplate" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "RecurringJournalEntry" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "Project" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "ProjectMember" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "Task" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "Milestone" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "Document" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "Comment" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "companyId" TEXT;
+
+UPDATE "ProductUomConversion" c SET "companyId" = p."companyId" FROM "Product" p WHERE c."productId" = p.id AND c."companyId" IS NULL;
+UPDATE "ProductAttributeValue" v SET "companyId" = p."companyId" FROM "Product" p WHERE v."productId" = p.id AND v."companyId" IS NULL;
+UPDATE "ProductAttribute" a SET "companyId" = v."companyId" FROM "ProductAttributeValue" v WHERE v."attributeId" = a.id AND a."companyId" IS NULL AND v."companyId" IS NOT NULL;
+UPDATE "FixedAsset" f SET "companyId" = a."companyId" FROM "Account" a WHERE f."accountId" = a.id AND f."companyId" IS NULL;
+UPDATE "PeriodClosingVoucher" v SET "companyId" = f."companyId" FROM "FiscalYear" f WHERE v."fiscalYearId" = f.id AND v."companyId" IS NULL;
+UPDATE "RecurringJournalEntry" r SET "companyId" = t."companyId" FROM "JournalEntryTemplate" t WHERE r."templateId" = t.id AND r."companyId" IS NULL;
+UPDATE "Project" p SET "companyId" = u."companyId" FROM "ProjectMember" pm JOIN "User" u ON u.id = pm."userId" WHERE pm."projectId" = p.id AND p."companyId" IS NULL AND u."companyId" IS NOT NULL;
+UPDATE "Project" p SET "companyId" = u."companyId" FROM "Task" t JOIN "User" u ON u.id = t."creatorId" WHERE t."projectId" = p.id AND p."companyId" IS NULL AND u."companyId" IS NOT NULL;
+UPDATE "ProjectMember" pm SET "companyId" = p."companyId" FROM "Project" p WHERE pm."projectId" = p.id AND pm."companyId" IS NULL;
+UPDATE "Task" t SET "companyId" = p."companyId" FROM "Project" p WHERE t."projectId" = p.id AND t."companyId" IS NULL;
+UPDATE "Task" t SET "companyId" = u."companyId" FROM "User" u WHERE t."creatorId" = u.id AND t."companyId" IS NULL;
+UPDATE "Milestone" m SET "companyId" = p."companyId" FROM "Project" p WHERE m."projectId" = p.id AND m."companyId" IS NULL;
+UPDATE "Document" d SET "companyId" = p."companyId" FROM "Project" p WHERE d."projectId" = p.id AND d."companyId" IS NULL;
+UPDATE "Comment" c SET "companyId" = u."companyId" FROM "User" u WHERE c."userId" = u.id AND c."companyId" IS NULL;
+UPDATE "Notification" n SET "companyId" = u."companyId" FROM "User" u WHERE n."userId" = u.id AND n."companyId" IS NULL;
+
+DROP INDEX IF EXISTS "CostCenter_code_key";
+DROP INDEX IF EXISTS "ProductAttribute_name_key";
+DROP INDEX IF EXISTS "PeriodClosingVoucher_closingNo_key";
+DROP INDEX IF EXISTS "FixedAsset_assetNo_key";
+
+CREATE UNIQUE INDEX "CostCenter_companyId_code_key" ON "CostCenter"("companyId", "code");
+CREATE UNIQUE INDEX "ProductAttribute_companyId_name_key" ON "ProductAttribute"("companyId", "name");
+CREATE UNIQUE INDEX "PeriodClosingVoucher_companyId_closingNo_key" ON "PeriodClosingVoucher"("companyId", "closingNo");
+CREATE UNIQUE INDEX "FixedAsset_companyId_assetNo_key" ON "FixedAsset"("companyId", "assetNo");
+
+CREATE INDEX "CostCenter_companyId_idx" ON "CostCenter"("companyId");
+CREATE INDEX "ProductUomConversion_companyId_idx" ON "ProductUomConversion"("companyId");
+CREATE INDEX "ProductAttribute_companyId_idx" ON "ProductAttribute"("companyId");
+CREATE INDEX "ProductAttributeValue_companyId_idx" ON "ProductAttributeValue"("companyId");
+CREATE INDEX "PeriodClosingVoucher_companyId_idx" ON "PeriodClosingVoucher"("companyId");
+CREATE INDEX "FixedAsset_companyId_idx" ON "FixedAsset"("companyId");
+CREATE INDEX "JournalEntryTemplate_companyId_idx" ON "JournalEntryTemplate"("companyId");
+CREATE INDEX "RecurringJournalEntry_companyId_idx" ON "RecurringJournalEntry"("companyId");
+CREATE INDEX "Project_companyId_idx" ON "Project"("companyId");
+CREATE INDEX "ProjectMember_companyId_idx" ON "ProjectMember"("companyId");
+CREATE INDEX "Task_companyId_idx" ON "Task"("companyId");
+CREATE INDEX "Milestone_companyId_idx" ON "Milestone"("companyId");
+CREATE INDEX "Document_companyId_idx" ON "Document"("companyId");
+CREATE INDEX "Comment_companyId_idx" ON "Comment"("companyId");
+CREATE INDEX "Notification_companyId_idx" ON "Notification"("companyId");
