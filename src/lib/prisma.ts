@@ -45,7 +45,14 @@ function withTenantProxy<T extends object>(client: T): T {
 }
 
 function createPrismaClient() {
-  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: Number(process.env.DB_POOL_MAX || 5),
+    min: 0,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 15_000,
+    allowExitOnIdle: false,
+  });
   const adapter = new PrismaPg(pool);
   const client = new PrismaClient({
     adapter,

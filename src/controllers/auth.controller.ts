@@ -15,11 +15,12 @@ import { passwordValidationMessage } from '../utils/password';
 
 const REFRESH_COOKIE = 'nishit_refresh';
 const LEGACY_REFRESH_COOKIE = 'orus_refresh';
-const REFRESH_DAYS = Number(process.env.REFRESH_TOKEN_DAYS || 30);
+const REFRESH_DAYS = Number(process.env.REFRESH_TOKEN_DAYS || 3650);
 const sha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 const randomToken = () => crypto.randomBytes(48).toString('base64url');
 const ipOf = (req: Request) => req.ip || req.socket.remoteAddress || 'unknown';
-const cookieOptions = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict' as const, path: '/api', maxAge: REFRESH_DAYS * 86400000 };
+const configuredSameSite = process.env.AUTH_COOKIE_SAME_SITE || (process.env.NODE_ENV === 'production' ? 'none' : 'lax');
+const cookieOptions = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: configuredSameSite as 'lax' | 'strict' | 'none', path: '/api', maxAge: REFRESH_DAYS * 86400000 };
 
 async function verifyPassword(hash: string, password: string) {
   return hash.startsWith('$argon2') ? argon2.verify(hash, password) : bcrypt.compare(password, hash);
@@ -129,7 +130,8 @@ export const refresh = async (req: Request, res: Response) => {
     const hash = sha256(raw);
     const session = await prisma.refreshSession.findUnique({ where: { tokenHash: hash }, include: { user: true } });
     if (!session || session.expiresAt <= new Date()) return error(res, 'Refresh session expired', 401, undefined, 'REFRESH_EXPIRED');
-    if (session.revokedAt) {
+    const isRecentRotation = session.revokedAt && session.revokeReason === 'ROTATED' && session.lastUsedAt && session.lastUsedAt > new Date(Date.now() - 30_000);
+    if (session.revokedAt && !isRecentRotation) {
       await prisma.refreshSession.updateMany({ where: { familyId: session.familyId, revokedAt: null }, data: { revokedAt: new Date(), revokeReason: 'REUSE_DETECTED' } });
       res.clearCookie(REFRESH_COOKIE, cookieOptions);
       return error(res, 'Refresh token reuse detected', 401, undefined, 'REFRESH_REUSE');
@@ -150,7 +152,7 @@ export const refresh = async (req: Request, res: Response) => {
           expiresAt: new Date(Date.now() + REFRESH_DAYS * 86400000),
         },
       });
-      await tx.refreshSession.update({
+      if (!session.revokedAt) await tx.refreshSession.update({
         where: { id: session.id },
         data: { revokedAt: new Date(), revokeReason: 'ROTATED', replacedById: replacement.id, lastUsedAt: new Date() },
       });

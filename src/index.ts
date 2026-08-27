@@ -189,11 +189,21 @@ if (process.env.ENABLE_RECURRING_INVOICE_SCHEDULER === 'true') {
 }
 
 if (process.env.ENABLE_BACKGROUND_WORKER !== 'false') {
-  setInterval(() => workOne().catch((err) => console.error('Background job worker failed', err)), 5_000);
-  setInterval(() => processCrmReminders().catch((err) => console.error('CRM reminder worker failed', err)), 60_000);
-  setInterval(() => processSalesExpiry().catch((err) => console.error('Sales expiry worker failed', err)), 60_000);
-  setInterval(() => processInventoryMonitoring().catch((err) => console.error('Inventory monitoring worker failed', err)), 60 * 60 * 1000);
-  setInterval(() => processProcurementMonitoring().catch((err) => console.error('Procurement monitoring worker failed', err)), 60 * 60 * 1000);
+  const guarded = (name: string, task: () => Promise<unknown>) => {
+    let running = false;
+    return async () => {
+      if (running) return;
+      running = true;
+      try { await task(); }
+      catch (err) { console.error(`${name} failed`, err); }
+      finally { running = false; }
+    };
+  };
+  setInterval(guarded('Background job worker', () => workOne()), 15_000);
+  setInterval(guarded('CRM reminder worker', () => processCrmReminders()), 60_000);
+  setInterval(guarded('Sales expiry worker', () => processSalesExpiry()), 60_000);
+  setInterval(guarded('Inventory monitoring worker', () => processInventoryMonitoring()), 60 * 60 * 1000);
+  setInterval(guarded('Procurement monitoring worker', () => processProcurementMonitoring()), 60 * 60 * 1000);
 }
 
 let shuttingDown = false;

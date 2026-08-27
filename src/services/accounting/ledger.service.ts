@@ -22,11 +22,34 @@ export type LedgerLineInput = {
 };
 
 async function fiscalContext(tx: Tx, postingDate: Date) {
-  const fiscalYear = await tx.fiscalYear.findFirst({
+  let fiscalYear = await tx.fiscalYear.findFirst({
     where: { startDate: { lte: postingDate }, endDate: { gte: postingDate }, isActive: true },
     include: { periods: true },
   });
-  if (!fiscalYear) throw new Error('No open fiscal year covers this posting date. Create an active Fiscal Year first, then post the journal entry.');
+  if (!fiscalYear) {
+    // A standalone ERP must be usable before the accounting settings page is
+    // visited. Serialize first-use setup so concurrent inventory postings do
+    // not create duplicate fiscal years.
+    await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtext($1))', `fiscal-year:${postingDate.getFullYear()}`);
+    fiscalYear = await tx.fiscalYear.findFirst({
+      where: { startDate: { lte: postingDate }, endDate: { gte: postingDate }, isActive: true },
+      include: { periods: true },
+    });
+    if (!fiscalYear) {
+      const startYear = postingDate.getMonth() >= 3 ? postingDate.getFullYear() : postingDate.getFullYear() - 1;
+      const startDate = new Date(startYear, 3, 1, 0, 0, 0, 0);
+      const endDate = new Date(startYear + 1, 2, 31, 23, 59, 59, 999);
+      const periods = Array.from({ length: 12 }, (_, index) => {
+        const periodStart = new Date(startYear, 3 + index, 1);
+        const periodEnd = new Date(startYear, 4 + index, 0, 23, 59, 59, 999);
+        return { name: periodStart.toLocaleString('en-IN', { month: 'short', year: 'numeric' }), startDate: periodStart, endDate: periodEnd };
+      });
+      fiscalYear = await tx.fiscalYear.create({
+        data: { name: `FY ${startYear}-${String(startYear + 1).slice(-2)}`, startDate, endDate, isActive: true, isClosed: false, periods: { create: periods } },
+        include: { periods: true },
+      });
+    }
+  }
   if (fiscalYear.isClosed) throw new Error(`Fiscal year ${fiscalYear.name} is closed`);
   const period = fiscalYear.periods.find((p: any) => p.startDate <= postingDate && p.endDate >= postingDate);
   if (!period) throw new Error(`No accounting period exists for ${postingDate.toISOString().slice(0, 10)} in fiscal year ${fiscalYear.name}`);
