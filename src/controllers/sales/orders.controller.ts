@@ -108,7 +108,7 @@ export const createSalesOrder = async (req: Request, res: Response) => {
 export const updateSalesOrder = async (req : Request , res: Response)=>{
   try{
     const { id } = req.params;
-    const { items, notes, terms, currency, discount, deliveryDate } = req.body;
+    const { items = [], notes, terms, currency, discount, deliveryDate, date, customerId, sourceWarehouseId } = req.body;
 
     const existingOrder = await prisma.salesOrder.findUnique({
       where: { id },
@@ -119,37 +119,13 @@ export const updateSalesOrder = async (req : Request , res: Response)=>{
       return error(res,'Only draft sales orders can be updates' , 400);
     }
     
-    let calculatedSubtotal = 0;
-    let calculatedTaxAmount = 0;
-
-    const newItemsData = items.map((item : any) =>{
-      const quantity = item.quantity || 0;
-      const unitPrice = item.unitPrice || 0;
-      const discountPercent = item.discount || 0; // Item level discount percent
-      const taxRate = item.taxRate || 0;
-
-      // Basic calculation
-      const lineBase = quantity * unitPrice;
-      const discountAmount = (lineBase * discountPercent) / 100;
-      const lineAfterDiscount = lineBase - discountAmount;
-      const taxAmount = (lineAfterDiscount * taxRate) / 100;
-      const lineTotal = lineAfterDiscount + taxAmount;
-
-      calculatedSubtotal += lineAfterDiscount;
-      calculatedTaxAmount += taxAmount;
-
-      return {
-        productId: item.productId,
-        description: item.description,
-        quantity: quantity,
-        unitPrice: unitPrice,
-        taxRate: taxRate,
-        discount: discountPercent,
-        total: lineTotal, // Server verified total
-      };
-    });
-    const calculatedTotal = calculatedSubtotal + calculatedTaxAmount - (discount || 0);
+    if (!items.length) return error(res, 'At least one sales order item is required', 400);
+    const effectiveCustomerId = customerId || existingOrder.customerId;
     const updatedOrder = await prisma.$transaction(async (tx) =>{
+      const customer = await tx.customer.findUnique({ where: { id: effectiveCustomerId } });
+      if (!customer) throw new Error('Customer not found');
+      const calculated = await normalizeSalesItems(tx, items, { customerId: effectiveCustomerId, currency: currency || existingOrder.currency, priceListId: req.body.priceListId, customerGroup: customer.customerGroup || undefined, territory: req.body.territory || customer.territory || undefined, salesChannel: req.body.salesChannel || customer.salesChannel || undefined });
+      const discountAmount = new Prisma.Decimal(discount ?? existingOrder.discount);
       await tx.salesOrderItem.deleteMany({
         where: { salesOrderId: id },
       });
@@ -157,27 +133,30 @@ export const updateSalesOrder = async (req : Request , res: Response)=>{
       const order = await tx.salesOrder.update({
         where: { id },
         data: {
+          customerId: effectiveCustomerId,
+          date: date ? new Date(date) : undefined,
           deliveryDate: deliveryDate ? new Date(deliveryDate) : undefined,
-          subtotal: calculatedSubtotal,
-          taxAmount: calculatedTaxAmount,
-          discount: discount || 0,
-          total: calculatedTotal,
-          currency: currency || 'USD',
+          sourceWarehouseId: sourceWarehouseId ?? existingOrder.sourceWarehouseId,
+          subtotal: calculated.subtotal,
+          taxAmount: calculated.taxAmount,
+          discount: discountAmount,
+          total: calculated.subtotal.plus(calculated.taxAmount).minus(discountAmount),
+          currency: currency || existingOrder.currency,
           notes,
           terms,
-          // Naye items ko cascade create command bhej rahe hain
           items: {
-            create: newItemsData,
+            create: calculated.items.map((item: any, index: number) => ({ ...item, sourceWarehouseId: sourceWarehouseId ?? existingOrder.sourceWarehouseId, supplyMode: items[index]?.supplyMode || 'MAKE_TO_STOCK', backorderQty: 0 })),
           },
         },
-        include: { items: true },
+        include: { customer: true, items: { include: { product: true } } },
       });
 
       return order;
     });
 
-    return success(res, updatedOrder, 'Sales Order Updates Successfully');
+    return success(res, updatedOrder, 'Sales order updated successfully');
   }catch(err : any){
+    if (!err.code && err.message) return error(res, err.message, 400);
     return handlePrismaError(res , err);
   }
 }

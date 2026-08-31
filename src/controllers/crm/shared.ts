@@ -86,8 +86,8 @@ export function csvToObjects(text: string) {
 }
 
 export function normalizeLeadRow(raw: any) {
-  const firstName = raw.firstname || raw.first || raw.name?.split(' ')?.[0] || '';
-  const lastName = raw.lastname || raw.last || raw.name?.split(' ')?.slice(1).join(' ') || '';
+  const firstName = raw.firstName || raw.firstname || raw.first || raw.name?.split(' ')?.[0] || '';
+  const lastName = raw.lastName || raw.lastname || raw.last || raw.name?.split(' ')?.slice(1).join(' ') || '';
   const email = normalizeEmail(raw.email);
   const phone = normalizePhone(raw.phone || raw.mobile, raw.country);
   return {
@@ -104,7 +104,9 @@ export function normalizeLeadRow(raw: any) {
     priority: raw.priority || 'MEDIUM',
     value: raw.value ? Number(raw.value) : undefined,
     notes: raw.notes || raw.note || '',
-    tags: raw.tags ? String(raw.tags).split(/[|;]/).map((t) => t.trim()).filter(Boolean) : [],
+    tags: Array.isArray(raw.tags)
+      ? raw.tags.map((tag: unknown) => String(tag).trim()).filter(Boolean)
+      : raw.tags ? String(raw.tags).split(/[|;,]/).map((t) => t.trim()).filter(Boolean) : [],
   };
 }
 

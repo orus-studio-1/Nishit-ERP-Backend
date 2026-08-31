@@ -46,7 +46,7 @@ import {
   updateRfqStatus,
   updateSupplierPaymentStatus,
 } from '../controllers/procurement.controller';
-import { authenticate, requireModuleAccess } from '../middleware/auth';
+import { authenticate, requireModuleAccess, requirePermission } from '../middleware/auth';
 import {
   acknowledgeRfq,
   acknowledgePurchaseOrder,
@@ -70,11 +70,13 @@ import {
   recordPurchaseDispatch,
   followUpPurchaseDelay,
 } from '../controllers/procurement/completion.controller';
+import { getProcurementAuditTrail } from '../controllers/procurement/audit.controller';
 
 const router = Router();
 router.post('/rfqs/vendor/:token/acknowledge', acknowledgeRfq);
 router.post('/purchase-orders/vendor/:token/acknowledge', acknowledgePurchaseOrder);
 router.use(authenticate);
+router.get('/audit-trail', requirePermission('access', 'audit', 'READ'), getProcurementAuditTrail);
 router.use(requireModuleAccess('procurement'));
 
 router.get('/dashboard', getProcurementDashboard);

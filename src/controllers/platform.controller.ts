@@ -52,4 +52,30 @@ export const getSettings = async (req: Request, res: Response) => { const rows =
 export const putSetting = async (req: Request, res: Response) => { const scope = req.body.scope || 'tenant'; const ids = { companyId: ['company', 'branch', 'user'].includes(scope) ? auth(req).user!.companyId : null, branchId: ['branch', 'user'].includes(scope) ? auth(req).user!.branchId : null, userId: scope === 'user' ? auth(req).user!.id : null }; const row = await prisma.platformSetting.upsert({ where: { tenantId_companyId_branchId_userId_namespace_key: { tenantId: tenant(req), ...ids, namespace: req.body.namespace, key: req.body.key } }, update: { value: req.body.value, valueType: req.body.valueType || typeof req.body.value, version: { increment: 1 }, updatedBy: auth(req).user!.id }, create: { tenantId: tenant(req), ...ids, namespace: req.body.namespace, key: req.body.key, value: req.body.value, valueType: req.body.valueType || typeof req.body.value, updatedBy: auth(req).user!.id } }); return success(res, row, 'Setting saved'); };
 
 export const listJobs = async (req: Request, res: Response) => { const page = Math.max(1, Number(req.query.page) || 1); const limit = Math.min(200, Number(req.query.limit) || 25); const where = { tenantId: tenant(req), ...(req.query.status ? { status: String(req.query.status) } : {}) }; const [items, total] = await Promise.all([prisma.backgroundJob.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' } }), prisma.backgroundJob.count({ where })]); return paginated(res, items, total, page, limit); };
-export const listAudit = async (req: Request, res: Response) => success(res, await prisma.platformAuditLog.findMany({ where: { tenantId: tenant(req), ...(req.query.entityType ? { entityType: String(req.query.entityType) } : {}), ...(req.query.entityId ? { entityId: String(req.query.entityId) } : {}) }, take: Math.min(200, Number(req.query.limit) || 50), orderBy: { createdAt: 'desc' } }));
+export const listAudit = async (req: Request, res: Response) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25));
+  const companyId = auth(req).user!.companyId;
+  const moduleName = String(req.query.module || '').trim().toUpperCase();
+  const action = String(req.query.action || '').trim().toUpperCase();
+  const userId = String(req.query.userId || '').trim();
+  const entityId = String(req.query.entityId || '').trim();
+  const from = req.query.from ? new Date(String(req.query.from)) : undefined;
+  const to = req.query.to ? new Date(`${String(req.query.to).slice(0, 10)}T23:59:59.999Z`) : undefined;
+  const where: any = {
+    tenantId: tenant(req),
+    companyId,
+    ...(moduleName ? { OR: [{ entityType: { startsWith: `${moduleName}:` } }, { entityType: moduleName.toLowerCase() }] } : {}),
+    ...(action ? { action } : {}),
+    ...(userId ? { userId } : {}),
+    ...(entityId ? { entityId } : {}),
+    ...(from || to ? { createdAt: { ...(from && !Number.isNaN(from.getTime()) ? { gte: from } : {}), ...(to && !Number.isNaN(to.getTime()) ? { lte: to } : {}) } } : {}),
+  };
+  const [items, total, users] = await Promise.all([
+    prisma.platformAuditLog.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' } }),
+    prisma.platformAuditLog.count({ where }),
+    prisma.user.findMany({ where: { companyId: companyId || undefined }, select: { id: true, firstName: true, lastName: true, email: true, role: true, employee: { select: { employeeId: true } } }, orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }] }),
+  ]);
+  const actors = new Map(users.map(user => [user.id, user]));
+  return success(res, { items: items.map(item => ({ ...item, actor: item.userId ? actors.get(item.userId) || null : null })), total, page, limit, totalPages: Math.ceil(total / limit), users });
+};

@@ -17,6 +17,23 @@ import {
 import { generateCustomerNo } from '../../utils/generate';
 import { crmScopeWhere } from './scope';
 
+// Keep request-only controls (for example allowDuplicate) and ownership fields
+// out of Prisma writes. This also prevents a newly added UI field from making
+// lead creation fail with an "unknown argument" validation error.
+const LEAD_WRITE_FIELDS = [
+  'title', 'firstName', 'lastName', 'email', 'phone', 'company', 'city', 'country',
+  'source', 'status', 'priority', 'value', 'score', 'tags', 'lostReason',
+  'lostReasonId', 'territory', 'productInterest', 'campaign', 'notes', 'assignedToId',
+] as const;
+
+function leadWriteData(source: Record<string, any>) {
+  const data: Record<string, any> = {};
+  for (const field of LEAD_WRITE_FIELDS) {
+    if (source[field] !== undefined) data[field] = source[field];
+  }
+  return data;
+}
+
 async function ensureCustomerForLead(tx: any, lead: any, contact: any) {
   let customer = contact?.id ? await tx.customer.findFirst({ where: { contactId: contact.id } }) : null;
   if (!customer && lead.email) customer = await tx.customer.findFirst({ where: { email: { equals: lead.email, mode: 'insensitive' } } });
@@ -109,8 +126,7 @@ export const createLead = async (req: AuthRequest, res: Response) => {
       const assignedToId = req.body.assignedToId || await resolveLeadAssignee(tx, normalized, req.user?.companyId, req.user!.id);
       const created = await tx.lead.create({
         data: {
-          ...req.body,
-          ...normalized,
+          ...leadWriteData({ ...req.body, ...normalized }),
           companyId: req.user?.companyId,
           branchId: req.user?.branchId,
           normalizedEmail: normalized.email,
@@ -119,7 +135,7 @@ export const createLead = async (req: AuthRequest, res: Response) => {
           organizationId: organization?.id,
           createdById: req.user!.id,
           assignedToId,
-        },
+        } as any,
         include: leadInclude,
       });
       await logCrmActivity(tx, req.user!.id, {
@@ -144,7 +160,7 @@ export const updateLead = async (req: AuthRequest, res: Response) => {
       const existing = await tx.lead.findFirst({ where: { id: req.params.id, ...(await crmScopeWhere(req, 'LEAD')) } });
       if (!existing) throw new Error('Lead not found');
       const organization = req.body.company ? await ensureOrganization(tx, req.body, req.user?.companyId, req.user?.id) : null;
-      const data: any = { ...req.body };
+      const data: any = leadWriteData(req.body);
       if (req.body.email !== undefined || req.body.phone !== undefined) {
         const normalized = normalizeLeadRow({ ...existing, ...req.body });
         data.email = normalized.email;

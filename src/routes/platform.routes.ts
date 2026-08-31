@@ -34,6 +34,6 @@ router.delete('/approvals/rules/:id', platform.deleteApprovalRule);
 router.get('/settings', platform.getSettings);
 router.put('/settings', platform.putSetting);
 router.get('/jobs', platform.listJobs);
-router.get('/audit', platform.listAudit);
+router.get('/audit', requirePermission('access', 'audit', 'READ'), platform.listAudit);
 
 export default router;
