@@ -30,7 +30,7 @@ export async function audit(tx: any, req: any, input: {
 export async function ensureAccount(tx: any, code: string, name: string, type: 'ASSET' | 'LIABILITY' | 'REVENUE' | 'EXPENSE' | 'EQUITY') {
   const existing = await tx.account.findFirst({ where: { code } });
   if (existing) return existing;
-  return tx.account.create({ data: { code, name, type, rootType: type, currency: 'USD' } });
+  return tx.account.create({ data: { code, name, type, rootType: type, currency: 'INR' } });
 }
 
 export async function defaultWarehouse(tx: any, warehouseId?: string) {

@@ -67,7 +67,7 @@ export const createPayment = async (req: Request, res: Response) => {
           invoiceId,
           date: date ? new Date(date) : new Date(),
           amount: paymentAmount,
-          currency: currency || invoice?.currency || 'USD',
+          currency: currency || invoice?.currency || 'INR',
           method,
           reference,
           notes,

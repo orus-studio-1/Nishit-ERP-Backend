@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
+import compression from 'compression';
 
 dotenv.config();
 
@@ -37,7 +38,7 @@ import { runDueSubscriptionsJob } from './controllers/invoicingExtras.controller
 import prisma from './lib/prisma';
 import { workOne } from './services/platform/job.service';
 import { processCrmReminders } from './services/crm/jobs';
-import { processSalesExpiry } from './services/sales/jobs';
+import { processSalesCommitmentAlerts, processSalesExpiry } from './services/sales/jobs';
 import { processInventoryMonitoring } from './services/inventory/jobs';
 import { processProcurementMonitoring } from './services/procurement/jobs';
 
@@ -45,6 +46,7 @@ const app = express();
 app.set('trust proxy', 1);
 
 app.use(helmet());
+app.use(compression({ threshold: 1024 }));
 
 const normalizeOrigin = (value: string) => value.trim().replace(/\/$/, '');
 const configuredOrigins = [
@@ -200,11 +202,28 @@ if (process.env.ENABLE_BACKGROUND_WORKER !== 'false') {
       finally { running = false; }
     };
   };
-  setInterval(guarded('Background job worker', () => workOne()), 15_000);
-  setInterval(guarded('CRM reminder worker', () => processCrmReminders()), 60_000);
-  setInterval(guarded('Sales expiry worker', () => processSalesExpiry()), 60_000);
-  setInterval(guarded('Inventory monitoring worker', () => processInventoryMonitoring()), 60 * 60 * 1000);
-  setInterval(guarded('Procurement monitoring worker', () => processProcurementMonitoring()), 60 * 60 * 1000);
+  const workBackgroundJobs = guarded('Background job worker', () => workOne());
+  const workCrmReminders = guarded('CRM reminder worker', () => processCrmReminders());
+  const workSalesExpiry = guarded('Sales expiry worker', () => processSalesExpiry());
+  const workSalesCommitments = guarded('Sales commitment alert worker', () => processSalesCommitmentAlerts());
+  const workInventoryMonitoring = guarded('Inventory monitoring worker', () => processInventoryMonitoring());
+  const workProcurementMonitoring = guarded('Procurement monitoring worker', () => processProcurementMonitoring());
+
+  // Run each worker once on startup so due delivery and stock alerts are not
+  // delayed by an hour after a deploy or process restart.
+  void workBackgroundJobs();
+  void workCrmReminders();
+  void workSalesExpiry();
+  void workSalesCommitments();
+  void workInventoryMonitoring();
+  void workProcurementMonitoring();
+
+  setInterval(workBackgroundJobs, 15_000);
+  setInterval(workCrmReminders, 60_000);
+  setInterval(workSalesExpiry, 60_000);
+  setInterval(workSalesCommitments, 60 * 60 * 1000);
+  setInterval(workInventoryMonitoring, 60 * 60 * 1000);
+  setInterval(workProcurementMonitoring, 60 * 60 * 1000);
 }
 
 let shuttingDown = false;

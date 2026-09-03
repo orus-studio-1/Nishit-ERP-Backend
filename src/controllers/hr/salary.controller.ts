@@ -54,7 +54,7 @@ export const createSalaryStructure = async (req: Request, res: Response) => {
     if (uniqueComponentIds.size !== components.length) return error(res, 'Each salary component can appear only once in a structure', 400);
     const item = await prisma.salaryStructure.create({
       data: {
-        name, description, currency: currency || 'USD',
+        name, description, currency: currency || 'INR',
         components: {
           create: components.map((c: any, idx: number) => ({
             salaryComponentId: c.salaryComponentId,

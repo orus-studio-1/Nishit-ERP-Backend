@@ -87,7 +87,7 @@ export const createAccount = async (req: Request, res: Response) => {
         subType: req.body.subType ? String(req.body.subType).trim() : null,
         parentId,
         description: req.body.description ? String(req.body.description).trim() : null,
-        currency: String(req.body.currency || 'USD').trim().toUpperCase(),
+        currency: String(req.body.currency || 'INR').trim().toUpperCase(),
         isGroup: Boolean(req.body.isGroup),
         freezeAccount: Boolean(req.body.freezeAccount),
         frozenTillDate,

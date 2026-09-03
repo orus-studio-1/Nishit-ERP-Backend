@@ -55,7 +55,7 @@ async function ensureCustomerForLead(tx: any, lead: any, contact: any) {
       city: lead.city || null,
       country: lead.country || null,
       notes: lead.notes || null,
-      currency: 'USD',
+      currency: 'INR',
     },
   });
 }
@@ -232,7 +232,7 @@ export const convertLead = async (req: AuthRequest, res: Response) => {
           organizationId: lead.organizationId,
           customerId: customer.id,
           value: Number(body.value ?? lead.value ?? 0),
-          currency: body.currency || 'USD',
+          currency: body.currency || 'INR',
           stage: 'QUALIFICATION',
           probability: Number(body.probability ?? 25),
           expectedClose: body.expectedClose ? new Date(body.expectedClose) : undefined,
@@ -290,7 +290,7 @@ export const qualifyLead = async (req: AuthRequest, res: Response) => {
           organizationId: lead.organizationId,
           customerId: customer.id,
           value: Number(body.value ?? lead.value ?? 0),
-          currency: body.currency || 'USD',
+          currency: body.currency || 'INR',
           stage: 'QUALIFICATION',
           probability: Number(body.probability ?? 25),
           expectedClose: body.expectedClose ? new Date(body.expectedClose) : undefined,

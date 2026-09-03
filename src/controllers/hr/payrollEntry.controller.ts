@@ -137,7 +137,7 @@ export const generatePayrollEntry = async (req: Request, res: Response) => {
             employeeId: emp.id,
             month: numericMonth,
             year: numericYear,
-            currency: assignment?.salaryStructure?.currency || 'USD',
+            currency: assignment?.salaryStructure?.currency || 'INR',
             grossPay: gross,
             totalDeduction: deductions,
             netPay: net,

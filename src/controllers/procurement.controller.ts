@@ -57,7 +57,7 @@ export const updateBuyingSettings = async (req: Request, res: Response) => {
       overReceiptAllowancePercent: Number(req.body.overReceiptAllowancePercent || 0),
       overBillingAllowancePercent: Number(req.body.overBillingAllowancePercent || 0),
       autoCreateMaterialRequest: req.body.autoCreateMaterialRequest !== false,
-      defaultCurrency: req.body.defaultCurrency || 'USD',
+      defaultCurrency: req.body.defaultCurrency || 'INR',
       rateTolerancePercent: Number(req.body.rateTolerancePercent || 0),
       quantityTolerancePercent: Number(req.body.quantityTolerancePercent || 0),
       taxTolerancePercent: Number(req.body.taxTolerancePercent || 0),
@@ -172,7 +172,7 @@ export const createSupplierQuotation = async (req: Request, res: Response) => {
     const doc = await (prisma as any).supplierQuotation.create({ data: {
       quotationNo: await nextNo('supplierQuotation', 'quotationNo', 'SQ'), rfqId: req.body.rfqId || undefined,
       supplierId: req.body.supplierId, date: req.body.date ? new Date(req.body.date) : new Date(),
-      validUntil: req.body.validUntil ? new Date(req.body.validUntil) : undefined, currency: req.body.currency || 'USD',
+      validUntil: req.body.validUntil ? new Date(req.body.validUntil) : undefined, currency: req.body.currency || 'INR',
       exchangeRate: req.body.exchangeRate || 1, subtotal: totals.subtotal, taxAmount: totals.taxAmount,
       shippingAmount: totals.shippingAmount, discount: req.body.discount || 0, total: totals.total,
       terms: req.body.terms || undefined, notes: req.body.notes || undefined, items: { create: items },
@@ -204,7 +204,7 @@ export const createBlanketPurchaseOrder = async (req: Request, res: Response) =>
     if (new Date(req.body.validTo) < new Date(req.body.validFrom)) return error(res, 'Valid To cannot be before Valid From', 400);
     return success(res, await (prisma as any).blanketPurchaseOrder.create({ data: {
       agreementNo: await nextNo('blanketPurchaseOrder', 'agreementNo', 'BPO', prisma as any), supplierId: req.body.supplierId,
-      validFrom: new Date(req.body.validFrom), validTo: new Date(req.body.validTo), currency: req.body.currency || 'USD',
+      validFrom: new Date(req.body.validFrom), validTo: new Date(req.body.validTo), currency: req.body.currency || 'INR',
       terms: req.body.terms || req.body.notes || undefined, items: { create: items },
     }, include: { supplier: true, items: { include: { product: true } } } }), 'Blanket purchase order created', 201);
   }
@@ -237,7 +237,7 @@ export const createPurchaseOrder = async (req: Request, res: Response) => {
       data: {
         ...links, orderNo: await generatePONo(), supplierId, date: date ? new Date(date) : new Date(), expectedDate: expectedDate ? new Date(expectedDate) : undefined,
         subtotal: Number(totals.subtotal), taxAmount: Number(totals.taxAmount), shippingAmount: Number(totals.shippingAmount), total: Number(totals.total), baseTotal: totals.baseTotal,
-        discount: discount || 0, currency: currency || 'USD', exchangeRate: exchangeRate || 1, notes, terms,
+        discount: discount || 0, currency: currency || 'INR', exchangeRate: exchangeRate || 1, notes, terms,
         items: { create: cleanItems },
       } as any,
       include: poInclude,
@@ -273,7 +273,7 @@ export const createPurchaseReceipt = async (req: Request, res: Response) => {
     const totals = documentTotals(items.map((item: any) => ({ quantity: item.receivedQty || item.quantity, rate: item.rate })));
     return success(res, await (prisma as any).purchaseReceipt.create({ data: {
       receiptNo: await nextNo('purchaseReceipt', 'receiptNo', 'PREC'), supplierId: req.body.supplierId,
-      postingDate: req.body.postingDate ? new Date(req.body.postingDate) : new Date(), currency: req.body.currency || 'USD',
+      postingDate: req.body.postingDate ? new Date(req.body.postingDate) : new Date(), currency: req.body.currency || 'INR',
       exchangeRate: req.body.exchangeRate || 1, costCenterId: req.body.costCenterId || undefined,
       projectId: req.body.projectId || undefined, notes: req.body.notes || req.body.terms || undefined,
       acceptedQty: items.reduce((s, i) => s.plus(i.acceptedQty || i.receivedQty || 0), new D(0)),
@@ -375,7 +375,7 @@ export const createPurchaseInvoice = async (req: Request, res: Response) => {
       date: invoiceDate, dueDate,
       subtotal: Number(totals.subtotal), taxAmount: Number(totals.taxAmount), shippingAmount: Number(totals.shippingAmount),
       discount: Number(req.body.discount || 0), total: Number(totals.total), baseTotal: totals.baseTotal,
-      outstandingAmount: totals.total, currency: req.body.currency || 'USD', exchangeRate: req.body.exchangeRate || 1,
+      outstandingAmount: totals.total, currency: req.body.currency || 'INR', exchangeRate: req.body.exchangeRate || 1,
       costCenterId: req.body.costCenterId || undefined, projectId: req.body.projectId || undefined,
       tdsSection: supplier.tdsSection || undefined, tdsRate, tdsAmount,
       reverseCharge: req.body.reverseCharge ?? supplier.reverseChargeApplicable,
@@ -419,7 +419,7 @@ export const createSupplierPayment = async (req: Request, res: Response) => {
       paymentNo: await nextNo('supplierPayment', 'paymentNo', 'SPAY'), supplierId: req.body.supplierId,
       purchaseOrderId: req.body.purchaseOrderId || undefined, purchaseInvoiceId: req.body.purchaseInvoiceId || undefined,
       type: req.body.type || 'INVOICE_PAYMENT', date: req.body.date ? new Date(req.body.date) : new Date(), amount,
-      unallocatedAmount: amount, currency: req.body.currency || 'USD', exchangeRate: req.body.exchangeRate || 1,
+      unallocatedAmount: amount, currency: req.body.currency || 'INR', exchangeRate: req.body.exchangeRate || 1,
       method: req.body.method || 'BANK_TRANSFER', reference: req.body.reference || undefined,
       notes: req.body.notes || req.body.terms || undefined,
     }, include: { supplier: true, purchaseOrder: true, purchaseInvoice: true } });

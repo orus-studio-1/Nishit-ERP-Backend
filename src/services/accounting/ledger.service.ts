@@ -62,7 +62,7 @@ export async function ensureLedgerAccount(tx: Tx, code: string, name: string, ty
   if (existing) {
     return tx.account.update({ where: { id: existing.id }, data: { ...flags, isGroup: false, isActive: true } });
   }
-  return tx.account.create({ data: { code, name, type, rootType: type, currency: 'USD', isGroup: false, ...flags } });
+  return tx.account.create({ data: { code, name, type, rootType: type, currency: 'INR', isGroup: false, ...flags } });
 }
 
 async function validateAccounts(tx: Tx, lines: LedgerLineInput[], postingDate: Date) {
@@ -127,7 +127,7 @@ export async function postToLedger(tx: Tx, input: {
       creditNoteId: line.creditNoteId,
       debit,
       credit,
-      currency: line.currency || 'USD',
+      currency: line.currency || 'INR',
       exchangeRate,
       debitBase: debit.mul(exchangeRate),
       creditBase: credit.mul(exchangeRate),

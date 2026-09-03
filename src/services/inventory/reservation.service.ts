@@ -24,22 +24,32 @@ export async function availableQty(tx: Tx, productId: string, warehouseId: strin
 }
 
 export async function reserveSalesOrderStock(tx: Tx, salesOrderId: string, warehouseId?: string) {
-  const warehouse = await defaultWarehouse(tx, warehouseId);
   const order = await tx.salesOrder.findUnique({ where: { id: salesOrderId }, include: { items: { include: { product: true } } } });
   if (!order) throw new Error('Sales order not found');
+
+  const requestedWarehouse = warehouseId ? await tx.warehouse.findFirst({ where: { id: warehouseId, isActive: true } }) : null;
 
   await tx.stockReservation.deleteMany({ where: { salesOrderId, status: { in: ['ACTIVE', 'PARTIAL'] } } });
   for (const item of order.items) {
     if (item.product?.type !== 'PRODUCT' || item.product?.maintainStock === false) continue;
     const qty = new D(item.quantity);
     if (item.supplyMode === 'MAKE_TO_ORDER') {
-      await tx.salesOrderItem.update({ where: { id: item.id }, data: { backorderQty: qty.minus(item.producedQty || 0) } });
+      const shortage = qty.minus(item.producedQty || 0);
+      await tx.salesOrderItem.update({ where: { id: item.id }, data: { backorderQty: shortage, readyQty: item.producedQty || 0, supplyStatus: shortage.gt(0) ? 'PRODUCTION_REQUIRED' : 'READY_TO_DISPATCH' } });
       continue;
     }
+    const itemWarehouse = item.sourceWarehouseId
+      ? await tx.warehouse.findFirst({ where: { id: item.sourceWarehouseId, isActive: true } })
+      : null;
+    const bestStock = !itemWarehouse && !requestedWarehouse
+      ? await tx.stockLevel.findFirst({ where: { productId: item.productId, warehouse: { isActive: true } }, orderBy: { quantity: 'desc' }, include: { warehouse: true } })
+      : null;
+    const warehouse = itemWarehouse || requestedWarehouse || bestStock?.warehouse || await defaultWarehouse(tx);
+    if (!warehouse?.id) throw new Error(`No active warehouse is available to reserve ${item.product.name}`);
     const available = await availableQty(tx, item.productId, warehouse.id);
     const reservedQty = item.product.allowNegativeStock ? qty : Prisma.Decimal.min(qty, Prisma.Decimal.max(available, new D(0)));
     const backorderQty = Prisma.Decimal.max(qty.minus(reservedQty), new D(0));
-    await tx.salesOrderItem.update({ where: { id: item.id }, data: { backorderQty } });
+    await tx.salesOrderItem.update({ where: { id: item.id }, data: { backorderQty, readyQty: reservedQty, supplyStatus: reservedQty.gte(qty) ? 'RESERVED' : reservedQty.gt(0) ? 'PARTIALLY_AVAILABLE' : 'PURCHASE_REQUIRED' } });
     if (reservedQty.lte(0)) continue;
     await tx.stockReservation.create({
       data: {
@@ -52,6 +62,12 @@ export async function reserveSalesOrderStock(tx: Tx, salesOrderId: string, wareh
       },
     });
     await setReservedQty(tx, item.productId, warehouse.id);
+  }
+  const refreshed = await tx.salesOrder.findUnique({ where: { id: salesOrderId }, include: { items: true } });
+  if (refreshed) {
+    const ready = refreshed.items.reduce((sum: Prisma.Decimal, item: any) => sum.plus(item.readyQty || 0), new D(0));
+    const ordered = refreshed.items.reduce((sum: Prisma.Decimal, item: any) => sum.plus(item.quantity || 0), new D(0));
+    await tx.salesOrder.update({ where: { id: salesOrderId }, data: { status: ready.gte(ordered) ? 'READY_TO_DISPATCH' : ready.gt(0) ? 'PARTIALLY_READY' : 'AWAITING_STOCK' } });
   }
 }
 

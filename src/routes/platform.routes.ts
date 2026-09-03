@@ -10,6 +10,7 @@ router.use(idempotency);
 router.route('/tenant').get(platform.getTenant).patch(platform.updateTenant);
 router.post('/companies/:companyId/branches', platform.createBranch);
 router.post('/companies/:companyId/gstins', platform.createGstin);
+router.put('/companies/:companyId/quotation-profile', platform.updateQuotationProfile);
 
 router.post('/documents', platform.registerLifecycle);
 router.post('/documents/:id/submit', optimisticConcurrency, platform.submitDocument);

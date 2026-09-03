@@ -18,6 +18,43 @@ export const updateTenant = async (req: Request, res: Response) => { const { nam
 export const createBranch = async (req: Request, res: Response) => { const company = await prisma.company.findFirst({ where: { id: req.params.companyId, tenantId: tenant(req) } }); if (!company) return error(res, 'Company not found', 404, undefined, 'COMPANY_NOT_FOUND'); return success(res, await prisma.branch.create({ data: { tenantId: tenant(req), companyId: company.id, code: req.body.code, name: req.body.name, gstin: req.body.gstin, address: req.body.address, isManufacturing: Boolean(req.body.isManufacturing) } }), 'Branch created', 201); };
 export const createGstin = async (req: Request, res: Response) => { const company = await prisma.company.findFirst({ where: { id: req.params.companyId, tenantId: tenant(req) } }); if (!company) return error(res, 'Company not found', 404, undefined, 'COMPANY_NOT_FOUND'); return success(res, await prisma.companyGstin.create({ data: { tenantId: tenant(req), companyId: company.id, stateCode: req.body.stateCode, gstin: req.body.gstin, legalName: req.body.legalName, address: req.body.address, isDefault: Boolean(req.body.isDefault) } }), 'GST registration created', 201); };
 
+const quotationImage = (value: unknown, label: string) => {
+  if (value == null || value === '') return null;
+  const image = String(value);
+  if (!/^data:image\/(png|jpe?g);base64,/i.test(image)) throw new Error(`${label} must be a PNG or JPEG image`);
+  if (image.length > 2_800_000) throw new Error(`${label} must be smaller than 2 MB`);
+  return image;
+};
+
+export const updateQuotationProfile = async (req: Request, res: Response) => {
+  try {
+    const company = await prisma.company.findFirst({ where: { id: req.params.companyId, tenantId: tenant(req) } });
+    if (!company) return error(res, 'Company not found', 404, undefined, 'COMPANY_NOT_FOUND');
+    const current = (company.quotationDefaults as Record<string, unknown> | null) || {};
+    const profile = {
+      ...current,
+      bankDetails: String(req.body.bankDetails ?? current.bankDetails ?? ''),
+      deliveryTerms: String(req.body.deliveryTerms ?? current.deliveryTerms ?? ''),
+      deliveryChargesNote: String(req.body.deliveryChargesNote ?? current.deliveryChargesNote ?? ''),
+      terms: String(req.body.terms ?? current.terms ?? ''),
+      signature: req.body.signature === undefined ? String(current.signature || '') || null : quotationImage(req.body.signature, 'Signature'),
+    };
+    const updated = await prisma.company.update({ where: { id: company.id }, data: {
+      name: String(req.body.name || company.name).trim(),
+      legalName: req.body.legalName === undefined ? company.legalName : String(req.body.legalName || '').trim() || null,
+      gstin: req.body.gstin === undefined ? company.gstin : String(req.body.gstin || '').trim().toUpperCase() || null,
+      address: req.body.address === undefined ? company.address : String(req.body.address || '').trim() || null,
+      city: req.body.city === undefined ? company.city : String(req.body.city || '').trim() || null,
+      state: req.body.state === undefined ? company.state : String(req.body.state || '').trim() || null,
+      country: req.body.country === undefined ? company.country : String(req.body.country || '').trim() || null,
+      zip: req.body.zip === undefined ? company.zip : String(req.body.zip || '').trim() || null,
+      logo: req.body.logo === undefined ? company.logo : quotationImage(req.body.logo, 'Logo'),
+      currency: 'INR', quotationDefaults: profile,
+    } });
+    return success(res, updated, 'Quotation company profile saved');
+  } catch (e: any) { return error(res, e.message || 'Could not save quotation company profile', 400); }
+};
+
 export const registerLifecycle = async (req: Request, res: Response) => success(res, await createLifecycle(req.body.entityType, req.body.entityId, undefined, req.body.branchId), 'Lifecycle registered', 201);
 export const submitDocument = async (req: Request, res: Response) => { try { return success(res, await submitLifecycle(req.params.id, (req as any).expectedVersion, req.body), 'Document submitted'); } catch (e: any) { return lifecycleError(res, e); } };
 export const cancelDocument = async (req: Request, res: Response) => { try { return success(res, await cancelLifecycle(req.params.id, (req as any).expectedVersion, req.body.reason), 'Document cancelled'); } catch (e: any) { return lifecycleError(res, e); } };

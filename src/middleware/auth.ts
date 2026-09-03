@@ -5,6 +5,8 @@ import { error } from '../utils/response';
 import { computeEffectiveAccess, firstPathSegment, getActionForRequest, hasPermission, EffectiveAccess } from '../utils/accessControl';
 import { runWithTenant } from '../utils/tenant';
 import prisma from '../lib/prisma';
+import { apiResponseCache } from './cache';
+import { cacheEpoch, cacheGet, cacheSet } from '../services/platform/cache.service';
 
 export interface AuthRequest extends Request {
   user?: { id: string; email: string; role: string; tenantId?: string | null; companyId?: string | null; branchId?: string | null; twoFactorVerified?: boolean };
@@ -28,18 +30,17 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
   }
 
   try {
-    const currentUser = await prisma.user.findUnique({
-      where: { id: decoded.id },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-        companyId: true,
-        isActive: true,
-        tokenVersion: true,
-        company: { select: { tenantId: true, branches: { where: { isActive: true }, select: { id: true }, orderBy: { createdAt: 'asc' }, take: 1 } } },
-      },
-    });
+    const authCacheKey = `nishit:auth:${await cacheEpoch()}:${decoded.id}:${decoded.tokenVersion ?? 0}`;
+    const cachedSession = await cacheGet(authCacheKey);
+    let currentUser: any, effectiveAccess: EffectiveAccess;
+    if (cachedSession) ({ currentUser, effectiveAccess } = JSON.parse(cachedSession));
+    else {
+      [currentUser, effectiveAccess] = await Promise.all([prisma.user.findUnique({
+        where: { id: decoded.id },
+        select: { id: true, email: true, role: true, companyId: true, isActive: true, tokenVersion: true, company: { select: { tenantId: true, branches: { where: { isActive: true }, select: { id: true }, orderBy: { createdAt: 'asc' }, take: 1 } } } },
+      }), computeEffectiveAccess(decoded.id)]);
+      if (currentUser) await cacheSet(authCacheKey, JSON.stringify({ currentUser, effectiveAccess }), 30);
+    }
     if (!currentUser || !currentUser.isActive) {
       error(res, 'Account is inactive or no longer exists', 401);
       return;
@@ -55,9 +56,9 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     const companyId = currentUser.companyId;
     req.user = { id: currentUser.id, email: currentUser.email, role: currentUser.role, tenantId: currentUser.company?.tenantId, companyId, branchId: currentUser.company?.branches[0]?.id || null, twoFactorVerified: Boolean(decoded.twoFactorVerified) };
     req.context = { tenantId: req.user.tenantId, companyId, branchId: req.user.branchId, userId: currentUser.id, requestId: String(req.headers['x-request-id'] || crypto.randomUUID()) };
-    req.access = await computeEffectiveAccess(decoded.id);
+    req.access = effectiveAccess;
     if (!req.user.companyId && req.access.companyId) req.user.companyId = req.access.companyId;
-    runWithTenant(req.context, () => next());
+    runWithTenant(req.context, () => apiResponseCache(req, res, next));
   } catch (err: any) {
     console.error('Unable to load authenticated session:', err);
     error(res, 'Unable to load your session. Please try again.', 500);

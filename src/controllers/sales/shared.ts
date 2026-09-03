@@ -47,7 +47,7 @@ export async function normalizeSalesItems(tx: any, items: any[] = [], context: {
     const total = net.plus(lineTax);
     subtotal = subtotal.plus(net);
     taxAmount = taxAmount.plus(lineTax);
-    normalized.push({ productId: product.id, description: item.description || product.description || product.name, quantity, unitPrice, taxRate, discount, total, uomId: item.uomId, costRate: product.costPrice || 0, marginPercent: pricing.marginPercent, priceSource: pricing.source });
+    normalized.push({ productId: product.id, description: item.description || product.description || product.name, hsnCode: item.hsnCode ?? product.hsnCode, brand: item.brand ?? product.brand ?? product.manufacturer, quantity, unitPrice, taxRate, discount, total, uomId: item.uomId, costRate: product.costPrice || 0, marginPercent: pricing.marginPercent, priceSource: pricing.source });
   }
 
   return { items: normalized, subtotal, taxAmount };

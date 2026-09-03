@@ -46,7 +46,7 @@ export const getPaymentEntry = async (req: Request, res: Response) => {
 
 export const createPaymentEntry = async (req: Request, res: Response) => {
   try {
-    const { type = 'RECEIVED', customerId, date, paidAmount, currency = 'USD', method = 'BANK_TRANSFER', reference, notes, allocations = [] } = req.body;
+    const { type = 'RECEIVED', customerId, date, paidAmount, currency = 'INR', method = 'BANK_TRANSFER', reference, notes, allocations = [] } = req.body;
     if (!customerId) return error(res, 'customerId is required', 400);
     if (!paidAmount || Number(paidAmount) <= 0) return error(res, 'paidAmount must be greater than zero', 400);
     const entry = await prisma.$transaction(async (tx) => {

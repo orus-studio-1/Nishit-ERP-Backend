@@ -2,7 +2,7 @@ function esc(value: any) {
   return String(value ?? '').replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 }
 
-function money(value: any, currency = 'USD') {
+function money(value: any, currency = 'INR') {
   const amount = value && typeof value.toNumber === 'function' ? value.toNumber() : Number(value || 0);
   return `${currency} ${amount.toFixed(2)}`;
 }

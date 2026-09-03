@@ -12,6 +12,8 @@ export async function refreshSalesOrderProgress(tx: Tx, salesOrderId: string) {
   const totalQty = order.items.reduce((sum: Prisma.Decimal, item: any) => sum.plus(item.quantity || 0), new D(0));
   const deliveredQty = order.items.reduce((sum: Prisma.Decimal, item: any) => sum.plus(item.deliveredQty || 0), new D(0));
   const billedQty = order.items.reduce((sum: Prisma.Decimal, item: any) => sum.plus(item.billedQty || 0), new D(0));
+  const dispatchedQty = order.items.reduce((sum: Prisma.Decimal, item: any) => sum.plus(item.dispatchedQty || 0), new D(0));
+  const readyQty = order.items.reduce((sum: Prisma.Decimal, item: any) => sum.plus(item.readyQty || 0), new D(0));
   const amountBilled = order.invoices
     .filter((invoice: any) => invoice.status !== 'CANCELLED')
     .reduce((sum: Prisma.Decimal, invoice: any) => sum.plus(invoice.grandTotal || invoice.total || 0), new D(0));
@@ -20,9 +22,13 @@ export async function refreshSalesOrderProgress(tx: Tx, salesOrderId: string) {
 
   let status = order.status;
   if (!['DRAFT', 'CANCELLED', 'ON_HOLD', 'CLOSED'].includes(status)) {
-    if (deliveredPercent.gte(100) && billedPercent.gte(100)) status = 'DELIVERED';
-    else if (deliveredPercent.gt(0) || billedPercent.gt(0)) status = 'PROCESSING';
-    else status = 'CONFIRMED';
+    if (deliveredQty.gte(totalQty)) status = 'DELIVERED';
+    else if (deliveredQty.gt(0)) status = 'PARTIALLY_DELIVERED';
+    else if (dispatchedQty.gte(totalQty)) status = 'FULLY_DISPATCHED';
+    else if (dispatchedQty.gt(0)) status = 'PARTIALLY_DISPATCHED';
+    else if (readyQty.gte(totalQty)) status = 'READY_TO_DISPATCH';
+    else if (readyQty.gt(0)) status = 'PARTIALLY_READY';
+    else status = 'AWAITING_STOCK';
   }
   return tx.salesOrder.update({
     where: { id: salesOrderId },

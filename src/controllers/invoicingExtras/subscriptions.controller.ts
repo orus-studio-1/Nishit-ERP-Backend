@@ -128,7 +128,7 @@ export const createSubscription = async (req: Request, res: Response) => {
           autoSubmit: !!data.autoSubmit,
           isActive: data.isActive ?? true,
           taxInclusive: !!data.taxInclusive,
-          currency: data.currency || 'USD',
+          currency: data.currency || 'INR',
           notes: data.notes,
           terms: data.terms,
           startDate: new Date(data.startDate),
