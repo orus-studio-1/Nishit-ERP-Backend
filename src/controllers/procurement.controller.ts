@@ -175,7 +175,8 @@ export const createSupplierQuotation = async (req: Request, res: Response) => {
       validUntil: req.body.validUntil ? new Date(req.body.validUntil) : undefined, currency: req.body.currency || 'INR',
       exchangeRate: req.body.exchangeRate || 1, subtotal: totals.subtotal, taxAmount: totals.taxAmount,
       shippingAmount: totals.shippingAmount, discount: req.body.discount || 0, total: totals.total,
-      terms: req.body.terms || undefined, notes: req.body.notes || undefined, items: { create: items },
+      terms: req.body.terms || undefined, notes: req.body.notes || undefined,
+      vendorDocumentDetails: req.body.vendorDocumentDetails || undefined, items: { create: items },
     }, include: { supplier: true, items: { include: { product: true } } } });
     return success(res, doc, 'Supplier quotation created', 201);
   } catch (err: any) { return handlePrismaError(res, err); }
@@ -190,7 +191,8 @@ export const createPurchaseOrderFromSupplierQuotation = async (req: Request, res
   try {
     const sq = await (prisma as any).supplierQuotation.findUnique({ where: { id: req.params.id }, include: { items: true } });
     if (!sq) return error(res, 'Supplier quotation not found', 404);
-    req.body = { supplierId: sq.supplierId, rfqId: sq.rfqId, supplierQuotationId: sq.id, date: new Date(), expectedDate: sq.validUntil, currency: sq.currency, exchangeRate: sq.exchangeRate, discount: sq.discount, shippingAmount: sq.shippingAmount, terms: sq.terms, notes: req.body.notes, items: sq.items.map((item: any) => ({ productId: item.productId, quantity: Number(item.quantity), unitPrice: Number(item.rate), taxRate: Number(item.taxRate), discount: Number(item.discount), uom: item.uom, stockUom: item.stockUom, conversionFactor: item.conversionFactor, supplierItemCode: item.supplierItemCode, total: Number(item.amount) })) };
+    const deliveryDates = sq.items.map((item: any) => item.deliveryDate).filter(Boolean);
+    req.body = { supplierId: sq.supplierId, rfqId: sq.rfqId, supplierQuotationId: sq.id, date: new Date(), expectedDate: deliveryDates.length ? new Date(Math.max(...deliveryDates.map((date: Date) => date.getTime()))) : undefined, currency: sq.currency, exchangeRate: sq.exchangeRate, discount: sq.discount, shippingAmount: sq.shippingAmount, terms: sq.terms, notes: req.body.notes, vendorDocumentDetails: sq.vendorDocumentDetails, items: sq.items.map((item: any) => ({ productId: item.productId, quantity: Number(item.quantity), unitPrice: Number(item.rate), taxRate: Number(item.taxRate), discount: Number(item.discount), uom: item.uom, stockUom: item.stockUom, conversionFactor: item.conversionFactor, supplierItemCode: item.supplierItemCode, total: Number(item.amount), categoryCode: item.categoryCode, hsnCode: item.hsnCode, make: item.make, quantityTolerance: item.quantityTolerance, expectedDate: item.deliveryDate })) };
     return createPurchaseOrder(req, res);
   } catch (err: any) { return handlePrismaError(res, err); }
 };

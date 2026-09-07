@@ -71,6 +71,11 @@ export function purchaseOrderItems(items: any[] = []) {
     conversionFactor: item.conversionFactor || 1,
     supplierItemCode: item.supplierItemCode || undefined,
     supplierItemName: item.supplierItemName || undefined,
+    categoryCode: item.categoryCode || undefined,
+    hsnCode: item.hsnCode || undefined,
+    make: item.make || undefined,
+    quantityTolerance: item.quantityTolerance || undefined,
+    expectedDate: item.expectedDate || item.deliveryDate ? new Date(item.expectedDate || item.deliveryDate) : undefined,
   }));
 }
 
@@ -88,6 +93,10 @@ export function supplierQuotationItems(items: any[] = []) {
     discount: item.discount || 0,
     amount: lineAmount({ ...item, rate: item.rate ?? item.unitPrice }).total,
     deliveryDate: item.deliveryDate ? new Date(item.deliveryDate) : undefined,
+    categoryCode: item.categoryCode || undefined,
+    hsnCode: item.hsnCode || undefined,
+    make: item.make || undefined,
+    quantityTolerance: item.quantityTolerance || undefined,
   }));
 }
 
@@ -118,6 +127,7 @@ export function purchaseReceiptItems(items: any[] = []) {
     conversionFactor: item.conversionFactor || 1,
     batchNo: item.batchNo || undefined,
     serialNo: item.serialNo || undefined,
+    supplierBatchNo: item.supplierBatchNo || undefined,
     qualityStatus: item.qualityStatus || undefined,
   }));
 }
@@ -135,21 +145,25 @@ export async function createPurchaseReceiptFromOrder(orderId: string, body: any 
   return prisma.$transaction(async (tx: any) => {
     const order = await tx.purchaseOrder.findUnique({ where: { id: orderId }, include: { supplier: true, items: { include: { product: true } } } });
     if (!order) throw new Error('Purchase order not found');
+    if (!['SENT', 'CONFIRMED', 'RECEIVING'].includes(order.status)) throw new Error('Only an open confirmed purchase order can be received');
     const receiptNo = await nextNo('purchaseReceipt', 'receiptNo', 'PREC', tx);
-    const items = order.items.map((item: any) => ({
-      purchaseOrderItemId: item.id,
-      productId: item.productId,
-      warehouseId: body.warehouseId || item.product.defaultWarehouseId,
-      description: item.description,
-      receivedQty: new D(item.quantity).minus(item.receivedQty || 0),
-      acceptedQty: new D(item.quantity).minus(item.receivedQty || 0),
-      rejectedQty: 0,
-      rate: item.unitPrice,
-      valuationRate: item.unitPrice,
-      uom: item.uom,
-      stockUom: item.stockUom,
-      conversionFactor: item.conversionFactor || 1,
-    })).filter((item: any) => new D(item.receivedQty).gt(0));
+    const requested = new Map((Array.isArray(body.items) ? body.items : []).map((line: any) => [String(line.purchaseOrderItemId || line.id), line]));
+    const items = order.items.flatMap((item: any) => {
+      // Rejected material has arrived physically, but the supplier still owes a
+      // replacement.  Supplier fulfilment is therefore based on accepted stock.
+      const open = new D(item.quantity).minus(item.acceptedQty || 0).minus(item.shortClosedQty || 0);
+      const input: any = requested.size ? requested.get(item.id) : null;
+      if (requested.size && !input) return [];
+      const accepted = new D(input?.acceptedQty ?? input?.quantity ?? input?.receivedQty ?? open);
+      const rejected = new D(input?.rejectedQty || 0);
+      const received = accepted.plus(rejected);
+      if (accepted.lt(0) || rejected.lt(0)) throw new Error(`${item.product.name}: quantities cannot be negative`);
+      if (received.gt(open)) throw new Error(`${item.product.name}: received quantity ${received} exceeds remaining ${open}`);
+      if (received.lte(0)) return [];
+      const warehouseId = input?.warehouseId || body.warehouseId || item.product.defaultWarehouseId;
+      if (!warehouseId) throw new Error(`${item.product.name}: receiving warehouse is required`);
+      return [{ purchaseOrderItemId: item.id, productId: item.productId, warehouseId, description: item.description, receivedQty: received, acceptedQty: accepted, rejectedQty: rejected, rate: item.unitPrice, valuationRate: item.unitPrice, uom: item.uom, stockUom: item.stockUom, conversionFactor: item.conversionFactor || 1, supplierBatchNo: input?.supplierBatchNo, batchNo: input?.batchNo, serialNo: input?.serialNo }];
+    });
     if (!items.length) throw new Error('All purchase order items are already received');
     const totals = documentTotals(items.map((item: any) => ({ quantity: item.acceptedQty, rate: item.rate })), 0, 0, order.exchangeRate || 1);
     return tx.purchaseReceipt.create({
@@ -161,7 +175,8 @@ export async function createPurchaseReceiptFromOrder(orderId: string, body: any 
         currency: order.currency,
         exchangeRate: order.exchangeRate || 1,
         acceptedQty: items.reduce((sum: any, item: any) => sum.plus(item.acceptedQty), new D(0)),
-        rejectedQty: 0,
+        rejectedQty: items.reduce((sum: any, item: any) => sum.plus(item.rejectedQty), new D(0)),
+        rejectedWarehouseId: items.some((item: any) => new D(item.rejectedQty).gt(0)) ? (body.rejectedWarehouseId || body.warehouseId) : undefined,
         subtotal: totals.subtotal,
         costCenterId: order.costCenterId,
         projectId: order.projectId,
@@ -245,7 +260,7 @@ export async function refreshPurchaseOrderProgress(tx: any, purchaseOrderId?: st
   const po = await tx.purchaseOrder.findUnique({ where: { id: purchaseOrderId }, include: { items: true, invoices: true } });
   if (!po) return;
   const ordered = po.items.reduce((sum: any, item: any) => sum.plus(item.quantity || 0), new D(0));
-  const received = po.items.reduce((sum: any, item: any) => sum.plus(item.receivedQty || 0), new D(0));
+  const received = po.items.reduce((sum: any, item: any) => sum.plus(item.acceptedQty || 0).plus(item.shortClosedQty || 0), new D(0));
   const billed = po.invoices.reduce((sum: any, inv: any) => sum.plus(inv.total || 0), new D(0));
   const total = new D(po.total || 0);
   const receivedPercent = ordered.gt(0) ? received.div(ordered).mul(100) : 0;

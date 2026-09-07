@@ -37,7 +37,14 @@ registerJobHandler('PROCUREMENT_PO_EMAIL', async ({ purchaseOrderId, to, token }
 registerJobHandler('PROCUREMENT_FOLLOWUP_EMAIL', async ({ communicationId, to }) => {
   const row = await prisma.supplierCommunicationLog.findUnique({ where: { id: communicationId }, include: { purchaseOrder: true } });
   if (!row) throw new Error('Supplier follow-up communication not found');
-  return send(to, row.subject || 'Purchase order delivery follow-up', row.message, pdf([row.subject || 'Delivery follow-up', row.purchaseOrder?.orderNo || '', row.message]), `${row.purchaseOrder?.orderNo || 'purchase-order'}-follow-up.pdf`);
+  try {
+    const result = await send(to, row.subject || 'Procurement follow-up', row.message, pdf([row.subject || 'Procurement follow-up', row.purchaseOrder?.orderNo || '', row.message]), `${row.purchaseOrder?.orderNo || 'procurement'}-follow-up.pdf`);
+    await prisma.supplierCommunicationLog.update({ where: { id: communicationId }, data: { status: 'SENT', deliveredAt: new Date(), failedAt: null, failureReason: null } });
+    return result;
+  } catch (error: any) {
+    await prisma.supplierCommunicationLog.update({ where: { id: communicationId }, data: { status: 'FAILED', failedAt: new Date(), failureReason: error.message || 'Email delivery failed' } });
+    throw error;
+  }
 });
 
 export async function processProcurementMonitoring() {

@@ -3885,6 +3885,7 @@ model PurchaseOrder {
   estimatedArrivalAt     DateTime?
   delayReason            String?
   lastFollowUpAt         DateTime?
+  vendorDocumentDetails  Json?
 
   items             PurchaseOrderItem[]
   invoices          PurchaseInvoice[]
@@ -3933,6 +3934,11 @@ model PurchaseOrderItem {
   conversionFactor Decimal       @default(1) @db.Decimal(18, 6)
   supplierItemCode String?
   supplierItemName String?
+  categoryCode     String?
+  hsnCode          String?
+  make             String?
+  quantityTolerance String?
+  expectedDate     DateTime?
   createdAt        DateTime      @default(now())
 
   receiptItems      PurchaseReceiptItem[]
@@ -4283,6 +4289,7 @@ model SupplierQuotation {
   paymentTermsDays     Int?
   leadTimeDays         Int?
   vendorRatingSnapshot Decimal?                @db.Decimal(9, 4)
+  vendorDocumentDetails Json?
 
   items          SupplierQuotationItem[]
   purchaseOrders PurchaseOrder[]
@@ -4320,6 +4327,10 @@ model SupplierQuotationItem {
   discount            Decimal           @default(0) @db.Decimal(9, 4)
   amount              Decimal           @default(0) @db.Decimal(18, 6)
   deliveryDate        DateTime?
+  categoryCode        String?
+  hsnCode             String?
+  make                String?
+  quantityTolerance   String?
 }
 
 model BlanketPurchaseOrder {
@@ -4567,6 +4578,13 @@ model SupplierCommunicationLog {
   channel             CommunicationChannel   @default(EMAIL)
   subject             String?
   message             String
+  kind                String                 @default("GENERAL")
+  recipient           String?
+  status              String                 @default("LOGGED")
+  queuedAt            DateTime?
+  deliveredAt         DateTime?
+  failedAt            DateTime?
+  failureReason       String?
   direction           CommunicationDirection @default(OUTBOUND)
   sentAt              DateTime               @default(now())
   createdById         String?
@@ -4575,6 +4593,8 @@ model SupplierCommunicationLog {
   @@index([rfqId])
   @@index([supplierQuotationId])
   @@index([purchaseOrderId, sentAt])
+  @@index([rfqId, sentAt])
+  @@index([status, queuedAt])
 }
 
 enum CommunicationChannel {

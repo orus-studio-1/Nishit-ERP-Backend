@@ -71,6 +71,7 @@ import {
   followUpPurchaseDelay,
 } from '../controllers/procurement/completion.controller';
 import { getProcurementAuditTrail } from '../controllers/procurement/audit.controller';
+import { addProcurementCaseCommunication, communicatePurchaseOrderDelay, getProcurementCase, getPurchaseOrderWorkspace, submitProcurementCaseRfq, updatePurchaseOrderCommitment, updateSupplierQuotationLifecycle } from '../controllers/procurement/workspace.controller';
 
 const router = Router();
 router.post('/rfqs/vendor/:token/acknowledge', acknowledgeRfq);
@@ -94,6 +95,9 @@ router.post('/material-requests/:id/rfq', createRfqFromMaterialRequest);
 router.post('/material-requests/:id/:operation', materialRequestSourcing);
 
 router.route('/rfqs').get(getRfqs).post(createRfq);
+router.get('/rfqs/:id/workspace', getProcurementCase);
+router.post('/rfqs/:id/communications', addProcurementCaseCommunication);
+router.post('/rfqs/:id/submit', submitProcurementCaseRfq);
 router.patch('/rfqs/:id/status', updateRfqStatus);
 router.get('/rfqs/:rfqId/compare', compareSupplierQuotations);
 router.get('/rfqs/:id/comparison', comparison);
@@ -102,12 +106,16 @@ router.post('/rfqs/:id/generate-purchase-orders', generateSelectedPurchaseOrders
 router.post('/rfqs/:id/:operation', rfqOperation);
 
 router.route('/supplier-quotations').get(getSupplierQuotations).post(createSupplierQuotation);
+router.post('/supplier-quotations/:id/lifecycle/:action', updateSupplierQuotationLifecycle);
 router.post('/supplier-quotations/:id/purchase-order', createPurchaseOrderFromSupplierQuotation);
 router.post('/supplier-quotations/:id/revise', reviseSupplierQuotation);
 
 router.route('/blanket-purchase-orders').get(getBlanketPurchaseOrders).post(createBlanketPurchaseOrder);
 
 router.route('/purchase-orders').get(getPurchaseOrders).post(createPurchaseOrder);
+router.get('/purchase-orders/:id/workspace', getPurchaseOrderWorkspace);
+router.patch('/purchase-orders/:id/commitment', updatePurchaseOrderCommitment);
+router.post('/purchase-orders/:id/communicate', communicatePurchaseOrderDelay);
 router.route('/purchase-orders/:id').get(getPurchaseOrder).delete(deletePurchaseOrder);
 router.put('/purchase-orders/:id/status', updatePurchaseOrderStatus);
 router.patch('/purchase-orders/:id/status', updatePurchaseOrderStatus);
