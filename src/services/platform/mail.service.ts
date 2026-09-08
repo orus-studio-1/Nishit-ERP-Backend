@@ -1,23 +1,38 @@
 import nodemailer from 'nodemailer';
+import { promises as dns } from 'dns';
 
 export type MailAttachment = { filename: string; content: Buffer; contentType?: string };
 export type SendMailInput = { to: string | string[]; subject: string; text: string; html?: string; attachments?: MailAttachment[] };
 
 let transporter: ReturnType<typeof nodemailer.createTransport> | undefined;
+let transporterPromise: Promise<ReturnType<typeof nodemailer.createTransport> | undefined> | undefined;
 
-function smtpTransport() {
+async function smtpTransport() {
   if (transporter) return transporter;
+  if (transporterPromise) return transporterPromise;
   const host = process.env.SMTP_HOST;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
   if (!host || !user || !pass) return undefined;
-  const port = Number(process.env.SMTP_PORT || 587);
-  transporter = nodemailer.createTransport({ host, port, secure: process.env.SMTP_SECURE === 'true' || port === 465, auth: { user, pass }, connectionTimeout: 15_000, greetingTimeout: 15_000, socketTimeout: 30_000 });
-  return transporter;
+  transporterPromise = (async () => {
+    const port = Number(process.env.SMTP_PORT || 587);
+    // Several production hosts expose IPv6 DNS records but do not provide an
+    // IPv6 route. Resolve an IPv4 address explicitly while retaining the SMTP
+    // hostname as TLS servername so certificate verification remains correct.
+    const resolvedHost = process.env.SMTP_FORCE_IPV4 === 'false'
+      ? host
+      : (await dns.lookup(host, { family: 4 })).address;
+    transporter = nodemailer.createTransport({ host: resolvedHost, port, secure: process.env.SMTP_SECURE === 'true' || port === 465, auth: { user, pass }, tls: { servername: host }, connectionTimeout: 15_000, greetingTimeout: 15_000, socketTimeout: 30_000 });
+    return transporter;
+  })().catch((error) => {
+    transporterPromise = undefined;
+    throw error;
+  });
+  return transporterPromise;
 }
 
 export async function sendSystemMail(input: SendMailInput) {
-  const smtp = smtpTransport();
+  const smtp = await smtpTransport();
   if (smtp) {
     const info = await smtp.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, ...input });
     return { provider: 'SMTP', messageId: info.messageId, accepted: info.accepted, rejected: info.rejected };

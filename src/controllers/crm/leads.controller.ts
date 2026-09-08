@@ -320,11 +320,18 @@ export const markLeadLost = async (req: AuthRequest, res: Response) => {
     const lead = await prisma.$transaction(async (tx) => {
       const existing = await tx.lead.findFirst({ where: { id: req.params.id, ...(await crmScopeWhere(req, 'LEAD')) } });
       if (!existing) throw new Error('Lead not found');
-      const lossReason = await tx.crmLostReason.findFirst({ where: { id: req.body.lostReasonId, companyId: req.user?.companyId, isActive: true, appliesTo: { in: ['LEAD', 'BOTH'] } } });
-      if (!lossReason) throw new Error('A valid loss reason is required');
+      const suppliedReason = typeof req.body.lostReason === 'string' ? req.body.lostReason.trim() : '';
+      const lossReason = req.body.lostReasonId
+        ? await tx.crmLostReason.findFirst({ where: { id: req.body.lostReasonId, companyId: req.user?.companyId, isActive: true, appliesTo: { in: ['LEAD', 'BOTH'] } } })
+        : null;
+      // The lead screen intentionally supports an operator-entered explanation as
+      // well as an administrator-maintained reason. Do not try to interpret free
+      // text as a CrmLostReason id.
+      if (req.body.lostReasonId && !lossReason) throw new Error('A valid loss reason is required');
+      if (!lossReason && !suppliedReason) throw new Error('A loss reason is required');
       const updated = await tx.lead.update({
         where: { id: existing.id },
-        data: { status: 'UNQUALIFIED', lostReasonId: lossReason.id, lostReason: lossReason.name },
+        data: { status: 'UNQUALIFIED', lostReasonId: lossReason?.id || null, lostReason: lossReason?.name || suppliedReason },
         include: leadInclude,
       });
       await logCrmActivity(tx, req.user!.id, {
@@ -339,7 +346,7 @@ export const markLeadLost = async (req: AuthRequest, res: Response) => {
     return success(res, lead, 'Lead marked lost');
   } catch (err: any) {
     if (err.message === 'Lead not found') return error(res, err.message, 404);
-    if (err.message === 'A valid loss reason is required') return error(res, err.message, 422);
+    if (['A valid loss reason is required', 'A loss reason is required'].includes(err.message)) return error(res, err.message, 422);
     return handlePrismaError(res, err);
   }
 };
