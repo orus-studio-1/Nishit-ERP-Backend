@@ -289,7 +289,7 @@ export const createPurchaseReceiptFromPurchaseOrder = async (req: Request, res: 
 };
 export const updatePurchaseReceiptStatus = async (req: Request, res: Response) => {
   try {
-    if (req.body.status === 'SUBMITTED') return success(res, await submitPurchaseReceipt(req.params.id), 'Purchase receipt submitted');
+    if (req.body.status === 'SUBMITTED') return success(res, await submitPurchaseReceipt(req.params.id, { tenantId: (req as any).user?.tenantId, userId: (req as any).user?.id }), 'Purchase receipt submitted and supplier communication recorded');
     if (req.body.status === 'CANCELLED') return success(res, await cancelVoucher('purchaseReceipt', req.params.id), 'Purchase receipt cancelled');
     return success(res, await (prisma as any).purchaseReceipt.update({ where: { id: req.params.id }, data: { status: req.body.status }, include: purchaseReceiptInclude }), 'Purchase receipt status updated');
   } catch (err: any) { return error(res, err.message || 'Failed', 400); }

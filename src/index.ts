@@ -222,7 +222,9 @@ if (process.env.ENABLE_BACKGROUND_WORKER !== 'false') {
   setInterval(workCrmReminders, 60_000);
   setInterval(workSalesExpiry, 60_000);
   setInterval(workSalesCommitments, 60 * 60 * 1000);
-  setInterval(workInventoryMonitoring, 60 * 60 * 1000);
+  // Stock-ledger postings alert immediately; this sweep also catches changes
+  // caused by reservations/imports and reconciles recovered stock promptly.
+  setInterval(workInventoryMonitoring, 5 * 60 * 1000);
   setInterval(workProcurementMonitoring, 60 * 60 * 1000);
 }
 

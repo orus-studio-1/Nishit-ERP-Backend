@@ -174,6 +174,20 @@ export async function postStockLedger(tx: Tx, input: {
     update: { quantity: afterQty },
     create: { productId: input.productId, warehouseId: warehouse.id, quantity: afterQty },
   });
+  const threshold = new D((await tx.productWarehouseRule.findUnique({ where: { productId_warehouseId: { productId: product.id, warehouseId: warehouse.id } } }))?.reorderLevel ?? product.reorderLevel ?? product.minStockLevel ?? 0);
+  const availableAfter = afterQty.minus(before.reservedQty);
+  const notificationType = `LOW_STOCK:${product.id}:${warehouse.id}`;
+  if (availableAfter.lte(threshold)) {
+    const recipients = product.companyId ? await tx.user.findMany({ where: { companyId: product.companyId, isActive: true, role: { in: ['ADMIN', 'MANAGER', 'PURCHASE_MANAGER'] } }, select: { id: true } }) : [];
+    for (const recipient of recipients) {
+      const existing = await tx.notification.findFirst({ where: { userId: recipient.id, type: notificationType, isRead: false } });
+      const message = `${product.sku} · ${product.name} has ${availableAfter.toString()} available in ${warehouse.name}; reorder level is ${threshold.toString()}.`;
+      if (existing) await tx.notification.update({ where: { id: existing.id }, data: { title: `Low stock: ${product.name}`, message, link: `/inventory/reports/stock-balance?productId=${product.id}&warehouseId=${warehouse.id}` } });
+      else await tx.notification.create({ data: { companyId: product.companyId, userId: recipient.id, type: notificationType, title: `Low stock: ${product.name}`, message, link: `/inventory/reports/stock-balance?productId=${product.id}&warehouseId=${warehouse.id}` } });
+    }
+  } else {
+    await tx.notification.updateMany({ where: { type: notificationType, isRead: false }, data: { isRead: true } });
+  }
   if (input.batchId) {
     await tx.batch.update({ where: { id: input.batchId }, data: { quantity: { increment: actualQty } } });
   }

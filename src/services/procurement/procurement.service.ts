@@ -188,9 +188,9 @@ export async function createPurchaseReceiptFromOrder(orderId: string, body: any 
   });
 }
 
-export async function submitPurchaseReceipt(receiptId: string) {
+export async function submitPurchaseReceipt(receiptId: string, context: { tenantId?: string; userId?: string } = {}) {
   return prisma.$transaction(async (tx: any) => {
-    const receipt = await tx.purchaseReceipt.findUnique({ where: { id: receiptId }, include: { items: { include: { product: true } }, qualityInspections: true, purchaseOrder: { include: { items: true } } } });
+    const receipt = await tx.purchaseReceipt.findUnique({ where: { id: receiptId }, include: { supplier: true, items: { include: { product: true } }, qualityInspections: true, purchaseOrder: { include: { items: true } } } });
     if (!receipt) throw new Error('Purchase receipt not found');
     if (receipt.status !== 'DRAFT') throw new Error('Only draft purchase receipts can be submitted');
     const settings = await tx.buyingSettings.findFirst({ where: { OR: [{ companyId: receipt.companyId }, { companyId: null }] }, orderBy: { companyId: 'desc' } });
@@ -225,7 +225,16 @@ export async function submitPurchaseReceipt(receiptId: string) {
       }
     }
     await refreshPurchaseOrderProgress(tx, receipt.purchaseOrderId);
-    return tx.purchaseReceipt.update({ where: { id: receiptId }, data: { status: 'SUBMITTED', submittedAt: new Date() }, include: purchaseReceiptInclude });
+    const updated = await tx.purchaseReceipt.update({ where: { id: receiptId }, data: { status: 'SUBMITTED', submittedAt: new Date() }, include: purchaseReceiptInclude });
+    if (receipt.supplier.email) {
+      const accepted = receipt.items.reduce((sum: any, item: any) => sum.plus(item.acceptedQty || 0), new D(0));
+      const rejected = receipt.items.reduce((sum: any, item: any) => sum.plus(item.rejectedQty || 0), new D(0));
+      const communication = await tx.supplierCommunicationLog.create({ data: { companyId: receipt.companyId, supplierId: receipt.supplierId, purchaseOrderId: receipt.purchaseOrderId, channel: 'EMAIL', direction: 'OUTBOUND', kind: 'PURCHASE_RECEIPT_POSTED', recipient: receipt.supplier.email, subject: `Goods receipt ${receipt.receiptNo}${receipt.purchaseOrder ? ` against ${receipt.purchaseOrder.orderNo}` : ''}`, message: `We have recorded goods receipt ${receipt.receiptNo}.${receipt.purchaseOrder ? `\nPurchase order: ${receipt.purchaseOrder.orderNo}` : ''}\nAccepted quantity: ${accepted.toString()}\nRejected quantity: ${rejected.toString()}\nPosting date: ${receipt.postingDate.toLocaleDateString('en-IN')}\n\nPlease review any rejected quantities and arrange replacement where required.`, status: 'QUEUED', queuedAt: new Date(), createdById: context.userId } });
+      await tx.backgroundJob.create({ data: { tenantId: context.tenantId, type: 'PROCUREMENT_RECEIPT_EMAIL', payload: { receiptId: receipt.id, communicationId: communication.id, to: receipt.supplier.email } } });
+    } else {
+      await tx.supplierCommunicationLog.create({ data: { companyId: receipt.companyId, supplierId: receipt.supplierId, purchaseOrderId: receipt.purchaseOrderId, channel: 'EMAIL', direction: 'OUTBOUND', kind: 'PURCHASE_RECEIPT_POSTED', subject: `Goods receipt ${receipt.receiptNo}`, message: `Goods receipt ${receipt.receiptNo} was posted, but no supplier email address is configured.`, status: 'FAILED', failedAt: new Date(), failureReason: 'Supplier email address is missing', createdById: context.userId } });
+    }
+    return updated;
   });
 }
 

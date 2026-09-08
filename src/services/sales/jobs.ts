@@ -17,10 +17,11 @@ registerJobHandler('SALES_QUOTATION_EMAIL', async ({ quotationId, to, token, com
   if (!to) throw new Error('Quotation recipient email is missing');
   const artifact = await preserveQuotationArtifact(quotation.id);
   const pdf = Buffer.from(artifact.content);
+  const communication = communicationId ? await prisma.salesCommunication.findUnique({ where: { id: communicationId } }) : null;
   try {
     const result = channel === 'WHATSAPP'
-      ? await sendGatewayMessage(channel, to, `Quotation ${quotation.quotationNo}`, `Your quotation is attached. Tracking token: ${token}`, pdf, `${quotation.quotationNo}.pdf`)
-      : await sendSystemMail({ to, subject: `Quotation ${quotation.quotationNo}`, text: `Please find quotation ${quotation.quotationNo}, revision ${quotation.revisionNo}, attached.`, attachments: [{ filename: `${quotation.quotationNo}.pdf`, contentType: 'application/pdf', content: pdf }] });
+      ? await sendGatewayMessage(channel, to, communication?.subject || `Quotation ${quotation.quotationNo}`, communication?.message || `Your quotation is attached. Tracking token: ${token}`, pdf, `${quotation.quotationNo}.pdf`)
+      : await sendSystemMail({ to, subject: communication?.subject || `Quotation ${quotation.quotationNo}`, text: communication?.message || `Please find quotation ${quotation.quotationNo}, revision ${quotation.revisionNo}, attached.`, attachments: [{ filename: `${quotation.quotationNo}.pdf`, contentType: 'application/pdf', content: pdf }] });
     if (communicationId) await prisma.salesCommunication.update({ where: { id: communicationId }, data: { status: 'SENT', sentAt: new Date() } });
     return result;
   } catch (error) { if (communicationId) await prisma.salesCommunication.update({ where: { id: communicationId }, data: { status: 'FAILED' } }); throw error; }

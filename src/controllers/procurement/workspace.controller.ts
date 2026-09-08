@@ -236,3 +236,57 @@ export async function addProcurementCaseCommunication(req: Request, res: Respons
     return success(res, communication, shouldSend ? 'Supplier email queued and recorded' : 'Communication recorded', 201);
   } catch (e: any) { return error(res, e.message || 'Could not record communication', 400); }
 }
+
+export async function getSupplierCommunicationWorkspace(req: Request, res: Response) {
+  try {
+    const supplier = await prisma.supplier.findUnique({ where: { id: req.params.supplierId } });
+    if (!supplier) return error(res, 'Supplier not found', 404);
+    const [communications, purchaseOrders, quotations, invitations, receipts] = await Promise.all([
+      prisma.supplierCommunicationLog.findMany({ where: { supplierId: supplier.id }, include: { rfq: true, supplierQuotation: true, purchaseOrder: true }, orderBy: { sentAt: 'desc' }, take: 300 }),
+      prisma.purchaseOrder.findMany({ where: { supplierId: supplier.id }, select: { id: true, orderNo: true, status: true, expectedDate: true, receivedPercent: true, total: true, currency: true }, orderBy: { createdAt: 'desc' }, take: 100 }),
+      prisma.supplierQuotation.findMany({ where: { supplierId: supplier.id }, select: { id: true, rfqId: true, quotationNo: true, revisionNo: true, status: true, total: true, date: true }, orderBy: { createdAt: 'desc' }, take: 100 }),
+      prisma.requestForQuotationSupplier.findMany({ where: { supplierId: supplier.id }, include: { rfq: true }, orderBy: { rfq: { createdAt: 'desc' } }, take: 100 }),
+      prisma.purchaseReceipt.findMany({ where: { supplierId: supplier.id }, select: { id: true, receiptNo: true, purchaseOrderId: true, status: true, postingDate: true, acceptedQty: true, rejectedQty: true }, orderBy: { postingDate: 'desc' }, take: 100 }),
+    ]);
+    const stats = { total: communications.length, outbound: communications.filter(row => row.direction === 'OUTBOUND').length, inbound: communications.filter(row => row.direction === 'INBOUND').length, failed: communications.filter(row => row.status === 'FAILED').length, unreadReplies: 0 };
+    return success(res, { supplier, communications, purchaseOrders, quotations, invitations, receipts, stats });
+  } catch (e: any) { return error(res, e.message || 'Could not load supplier communication workspace', 400); }
+}
+
+export async function createSupplierWorkspaceCommunication(req: Request, res: Response) {
+  try {
+    const supplier = await prisma.supplier.findUnique({ where: { id: req.params.supplierId } });
+    if (!supplier) return error(res, 'Supplier not found', 404);
+    const channel = String(req.body.channel || 'EMAIL').toUpperCase() as any;
+    const direction = String(req.body.direction || 'OUTBOUND').toUpperCase() as any;
+    if (!['EMAIL', 'PHONE', 'PORTAL', 'NOTE'].includes(channel)) return error(res, 'Invalid communication channel', 400);
+    if (!['INBOUND', 'OUTBOUND'].includes(direction)) return error(res, 'Invalid communication direction', 400);
+    const message = String(req.body.message || '').trim();
+    if (!message) return error(res, 'Message is required', 400);
+    const recipient = String(req.body.recipient || supplier.email || '').trim();
+    const send = Boolean(req.body.send) && channel === 'EMAIL' && direction === 'OUTBOUND';
+    if (send && !recipient) return error(res, 'Supplier email is required', 400);
+    const communication = await prisma.$transaction(async tx => {
+      const created = await tx.supplierCommunicationLog.create({ data: { companyId: supplier.companyId, supplierId: supplier.id, rfqId: req.body.rfqId || undefined, supplierQuotationId: req.body.supplierQuotationId || undefined, purchaseOrderId: req.body.purchaseOrderId || undefined, channel, direction, kind: req.body.kind || 'GENERAL', recipient: recipient || undefined, subject: req.body.subject || undefined, message, status: send ? 'QUEUED' : 'LOGGED', queuedAt: send ? new Date() : undefined, sentAt: req.body.occurredAt ? new Date(req.body.occurredAt) : new Date(), createdById: user(req).id } });
+      if (send) await tx.backgroundJob.create({ data: { tenantId: user(req).tenantId, type: 'PROCUREMENT_FOLLOWUP_EMAIL', payload: { communicationId: created.id, to: recipient } } });
+      await tx.procurementAuditEvent.create({ data: { companyId: supplier.companyId, rfqId: req.body.rfqId || undefined, entityType: 'SUPPLIER_COMMUNICATION', entityId: created.id, action: send ? 'EMAIL_QUEUED' : `${direction}_${channel}_LOGGED`, actorId: user(req).id, after: { supplierId: supplier.id, kind: req.body.kind || 'GENERAL', recipient, purchaseOrderId: req.body.purchaseOrderId } } });
+      return created;
+    });
+    return success(res, communication, send ? 'Supplier email queued and recorded' : 'Supplier communication recorded', 201);
+  } catch (e: any) { return error(res, e.message || 'Could not record supplier communication', 400); }
+}
+
+export async function retrySupplierCommunication(req: Request, res: Response) {
+  try {
+    const communication = await prisma.$transaction(async tx => {
+      const existing = await tx.supplierCommunicationLog.findUnique({ where: { id: req.params.id } });
+      if (!existing) throw new Error('Communication not found');
+      if (existing.channel !== 'EMAIL' || existing.direction !== 'OUTBOUND') throw new Error('Only outbound email can be retried');
+      if (!existing.recipient) throw new Error('Communication recipient is missing');
+      const updated = await tx.supplierCommunicationLog.update({ where: { id: existing.id }, data: { status: 'QUEUED', queuedAt: new Date(), failedAt: null, failureReason: null } });
+      await tx.backgroundJob.create({ data: { tenantId: user(req).tenantId, type: 'PROCUREMENT_FOLLOWUP_EMAIL', payload: { communicationId: existing.id, to: existing.recipient } } });
+      return updated;
+    });
+    return success(res, communication, 'Supplier email queued for retry');
+  } catch (e: any) { return error(res, e.message || 'Could not retry supplier email', 400); }
+}

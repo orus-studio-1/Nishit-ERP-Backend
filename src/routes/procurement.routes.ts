@@ -71,7 +71,7 @@ import {
   followUpPurchaseDelay,
 } from '../controllers/procurement/completion.controller';
 import { getProcurementAuditTrail } from '../controllers/procurement/audit.controller';
-import { addProcurementCaseCommunication, communicatePurchaseOrderDelay, getProcurementCase, getPurchaseOrderWorkspace, submitProcurementCaseRfq, updatePurchaseOrderCommitment, updateSupplierQuotationLifecycle } from '../controllers/procurement/workspace.controller';
+import { addProcurementCaseCommunication, communicatePurchaseOrderDelay, createSupplierWorkspaceCommunication, getProcurementCase, getPurchaseOrderWorkspace, getSupplierCommunicationWorkspace, retrySupplierCommunication, submitProcurementCaseRfq, updatePurchaseOrderCommitment, updateSupplierQuotationLifecycle } from '../controllers/procurement/workspace.controller';
 
 const router = Router();
 router.post('/rfqs/vendor/:token/acknowledge', acknowledgeRfq);
@@ -87,6 +87,9 @@ router.route('/settings').get(getBuyingSettings).put(updateBuyingSettings).patch
 router.route('/payment-terms').get(getPaymentTerms).post(createPaymentTerms);
 router.route('/supplier-items').get(getSupplierItems).post(createSupplierItem);
 router.route('/communications').get(getSupplierCommunications).post(addSupplierCommunication);
+router.get('/suppliers/:supplierId/communication-workspace', getSupplierCommunicationWorkspace);
+router.post('/suppliers/:supplierId/communications', createSupplierWorkspaceCommunication);
+router.post('/communications/:id/retry', retrySupplierCommunication);
 
 router.route('/material-requests').get(getMaterialRequests).post(createMaterialRequest);
 router.post('/material-requests/from-reorder', createMaterialRequestsFromReorder);
