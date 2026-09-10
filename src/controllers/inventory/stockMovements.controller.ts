@@ -32,13 +32,29 @@ export const getStockMovements = async (req: Request, res: Response) => {
 
 export const createStockMovement = async (req: Request, res: Response) => {
   try {
-    const { productId, warehouseId, type, quantity, unitCost, reference, notes } = req.body;
+    const { productId, warehouseId, type, quantity, unitCost, reference, notes,batchNumber,serialNumber } = req.body;
 
     const movement = await prisma.$transaction(async (tx) => {
       const created = await tx.stockMovement.create({
         data: { productId, warehouseId, type, quantity, unitCost, reference, notes },
         include: { product: true, warehouse: true },
       });
+      const product = await tx.product.findUnique({ where: { id: productId } });
+      let batchId: string | undefined;
+      let serialNoId: string | undefined;
+      if (product.hasBatchNo && batchNumber) {
+            let batch = await tx.batch.findFirst({
+              where: { productId, warehouseId, batchNo: batchNumber },
+            })
+            batchId = batch.id;
+          }
+      
+          if (product.hasSerialNo && serialNumber) {
+            let serial = await tx.serialNumber.findFirst({
+              where: { productId, serialNo: serialNumber },
+            });
+            serialNoId = serial.id;
+          }
       if (type === 'TRANSFER' && req.body.toWarehouseId) {
         await postStockTransfer(tx, {
           productId,
@@ -62,6 +78,8 @@ export const createStockMovement = async (req: Request, res: Response) => {
           voucherId: created.id,
           voucherNo: reference || created.id,
           remarks: notes,
+          batchId,
+          serialNoId
         });
       }
       return created;
