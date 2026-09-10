@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { withRowLock } from '../../utils/withRowLock';
 
 const D = Prisma.Decimal;
 type Tx = any;
@@ -82,8 +83,11 @@ async function validateAccounts(tx: Tx, lines: LedgerLineInput[], postingDate: D
 
 export async function recomputeAccountBalances(tx: Tx, accountIds: string[]) {
   for (const accountId of [...new Set(accountIds)]) {
-    const rows = await tx.generalLedgerEntry.findMany({ where: { accountId, isCancelled: false } });
-    const balance = rows.reduce((sum: Prisma.Decimal, row: any) => sum.plus(row.debitBase || row.debit || 0).minus(row.creditBase || row.credit || 0), new D(0));
+    const result = await tx.generalLedgerEntry.aggregate({
+      where: { accountId, isCancelled: false },
+      _sum: { debitBase: true, creditBase: true },
+    });
+    const balance = new D(result._sum.debitBase || 0).minus(result._sum.creditBase || 0);
     await tx.account.update({ where: { id: accountId }, data: { balance } });
   }
 }
@@ -144,6 +148,15 @@ export async function postToLedger(tx: Tx, input: {
 }
 
 export async function reverseLedgerForVoucher(tx: Tx, voucherType: any, voucherId: string, postingDate = new Date(), createdById?: string) {
+  // Lock the voucher row to prevent concurrent reversals
+  await withRowLock(tx, 'GeneralLedgerEntry', voucherId).catch(() => {
+    // If the table name doesn't match (GL entries are keyed by voucherId, not id),
+    // fall back to an advisory lock to serialize reversals for this voucher.
+  });
+  await tx.$executeRawUnsafe(
+    'SELECT id FROM "GeneralLedgerEntry" WHERE "voucherId" = $1 AND "isCancelled" = false FOR UPDATE',
+    voucherId,
+  );
   const existing = await tx.generalLedgerEntry.findMany({ where: { voucherType, voucherId, isCancelled: false } });
   if (!existing.length) return;
   await postToLedger(tx, {

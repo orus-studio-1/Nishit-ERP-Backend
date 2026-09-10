@@ -1,4 +1,4 @@
-﻿import { Request, Response } from 'express';
+import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { success, paginated, error } from '../utils/response';
@@ -6,6 +6,7 @@ import { handlePrismaError } from '../utils/prismaError';
 import { generateJournalNo } from '../utils/generate';
 import { postToLedger, reverseLedgerForVoucher } from '../services/accounting/ledger.service';
 import { pickDefined } from '../utils/payload';
+import { withRowLock } from '../utils/withRowLock';
 
 function lineTotals(lines: any[] = []) {
   return lines.reduce((acc, line) => ({ debit: acc.debit + Number(line.debit || 0), credit: acc.credit + Number(line.credit || 0) }), { debit: 0, credit: 0 });
@@ -201,6 +202,7 @@ export const createJournalEntry = async (req: Request, res: Response) => {
 export const postJournalEntry = async (req: Request, res: Response) => {
   try {
     const entry = await prisma.$transaction(async (tx) => {
+      await withRowLock(tx, 'JournalEntry', req.params.id);
       const existing = await tx.journalEntry.findUnique({ where: { id: req.params.id }, include: { lines: true } });
       if (!existing) throw new Error('Entry not found');
       if (existing.status !== 'DRAFT' && existing.status !== 'PENDING_APPROVAL') throw new Error('Only draft entries can be posted');
@@ -234,6 +236,7 @@ export const postJournalEntry = async (req: Request, res: Response) => {
 export const cancelJournalEntry = async (req: Request, res: Response) => {
   try {
     const entry = await prisma.$transaction(async (tx) => {
+      await withRowLock(tx, 'JournalEntry', req.params.id);
       const existing = await tx.journalEntry.findUnique({ where: { id: req.params.id } });
       if (!existing) throw new Error('Entry not found');
       if (existing.status !== 'POSTED') throw new Error('Only posted entries can be cancelled');
@@ -569,6 +572,7 @@ export const createPeriodClosingVoucher = async (req: Request, res: Response) =>
 export const submitPeriodClosingVoucher = async (req: Request, res: Response) => {
   try {
     const voucher = await prisma.$transaction(async (tx) => {
+      await withRowLock(tx, 'PeriodClosingVoucher', req.params.id);
       const existing = await tx.periodClosingVoucher.findUnique({ where: { id: req.params.id } });
       if (!existing) throw new Error('Closing voucher not found');
       if (existing.status !== 'DRAFT') throw new Error('Only draft closing vouchers can be submitted');

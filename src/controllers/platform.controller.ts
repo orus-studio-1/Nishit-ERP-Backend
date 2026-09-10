@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth';
 import { error, paginated, success } from '../utils/response';
@@ -10,6 +11,7 @@ import { amendLifecycle, cancelLifecycle, createLifecycle, submitLifecycle } fro
 
 const s3 = new S3Client({ region: process.env.S3_REGION || 'auto', endpoint: process.env.S3_ENDPOINT, forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true', credentials: process.env.S3_ACCESS_KEY_ID ? { accessKeyId: process.env.S3_ACCESS_KEY_ID, secretAccessKey: process.env.S3_SECRET_ACCESS_KEY! } : undefined });
 const bucket = process.env.S3_BUCKET || '';
+const maxUploadBytes = Number(process.env.S3_MAX_UPLOAD_BYTES) || 26_214_400; // 25 MB default
 const auth = (req: Request) => req as AuthRequest;
 const tenant = (req: Request) => auth(req).user!.tenantId!;
 
@@ -66,8 +68,22 @@ export const presignAttachment = async (req: Request, res: Response) => {
   const id = crypto.randomUUID();
   const key = `${tenant(req)}/${req.body.entityType}/${req.body.entityId}/${id}/${String(req.body.fileName).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
   const attachment = await prisma.attachment.create({ data: { id, tenantId: tenant(req), companyId: auth(req).user!.companyId, entityType: req.body.entityType, entityId: req.body.entityId, fileName: req.body.fileName, mimeType: req.body.mimeType, sizeBytes: BigInt(req.body.sizeBytes), storageKey: key, checksum: req.body.checksum, version: req.body.version || 1, supersedesId: req.body.supersedesId, uploadedBy: auth(req).user!.id, isPrivate: req.body.isPrivate !== false } });
-  const uploadUrl = await getSignedUrl(s3, new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: attachment.mimeType, ChecksumSHA256: attachment.checksum || undefined, Metadata: { attachmentId: attachment.id, tenantId: tenant(req) } }), { expiresIn: 900 });
-  return success(res, { uploadUrl, storageKey: key, attachmentId: attachment.id, expiresIn: 900 }, 'Upload URL issued', 201);
+  const { url, fields } = await createPresignedPost(s3, {
+    Bucket: bucket,
+    Key: key,
+    Conditions: [
+      ['content-length-range', 0, maxUploadBytes],
+      ['eq', '$Content-Type', attachment.mimeType],
+    ],
+    Fields: {
+      'Content-Type': attachment.mimeType,
+      ...(attachment.checksum ? { 'x-amz-checksum-sha256': attachment.checksum } : {}),
+      'x-amz-meta-attachmentid': attachment.id,
+      'x-amz-meta-tenantid': tenant(req),
+    },
+    Expires: 900,
+  });
+  return success(res, { url, fields, storageKey: key, attachmentId: attachment.id, expiresIn: 900 }, 'Upload URL issued', 201);
 };
 export const completeAttachment = async (req: Request, res: Response) => { const row = await prisma.attachment.findFirst({ where: { id: req.params.id, tenantId: tenant(req), status: 'PENDING_UPLOAD' } }); if (!row) return error(res, 'Attachment not found', 404, undefined, 'ATTACHMENT_NOT_FOUND'); try { await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: row.storageKey })); } catch { return error(res, 'Uploaded object was not found', 409, undefined, 'UPLOAD_INCOMPLETE'); } await prisma.attachment.update({ where: { id: row.id }, data: { status: 'SCANNING' } }); await enqueueJob('ATTACHMENT_SCAN', { attachmentId: row.id }, { tenantId: tenant(req) }); return success(res, { ...row, status: 'SCANNING' }, 'Upload confirmed; antivirus scan queued'); };
 export const listAttachments = async (req: Request, res: Response) => success(res, await prisma.attachment.findMany({ where: { tenantId: tenant(req), entityType: String(req.query.entityType), entityId: String(req.query.entityId), deletedAt: null }, orderBy: [{ fileName: 'asc' }, { version: 'desc' }] }));
