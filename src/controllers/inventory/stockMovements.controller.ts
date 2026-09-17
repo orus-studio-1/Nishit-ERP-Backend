@@ -40,21 +40,39 @@ export const createStockMovement = async (req: Request, res: Response) => {
         include: { product: true, warehouse: true },
       });
       const product = await tx.product.findUnique({ where: { id: productId } });
+      if (!product) {
+        throw new Error('Product not found');
+      }
+
       let batchId: string | undefined;
       let serialNoId: string | undefined;
-      if (product.hasBatchNo && batchNumber) {
-            let batch = await tx.batch.findFirst({
-              where: { productId, warehouseId, batchNo: batchNumber },
-            })
-            batchId = batch.id;
-          }
-      
-          if (product.hasSerialNo && serialNumber) {
-            let serial = await tx.serialNumber.findFirst({
-              where: { productId, serialNo: serialNumber },
-            });
-            serialNoId = serial.id;
-          }
+
+      if (product.hasBatchNo) {
+        if (!batchNumber || !batchNumber.trim()) {
+          throw new Error(`Batch number is required for ${product.name}`);
+        }
+        const batch = await tx.batch.findFirst({
+          where: { productId, warehouseId, batchNo: batchNumber.trim() },
+        });
+        if (!batch) {
+          throw new Error(`Batch "${batchNumber}" does not exist in the selected warehouse`);
+        }
+        batchId = batch.id;
+      }
+
+      if (product.hasSerialNo) {
+        if (!serialNumber || !serialNumber.trim()) {
+          throw new Error(`Serial number is required for ${product.name}`);
+        }
+        const serial = await tx.serialNumber.findFirst({
+          where: { productId, serialNo: serialNumber.trim() },
+        });
+        if (!serial) {
+          throw new Error(`Serial number "${serialNumber}" does not exist for ${product.name}`);
+        }
+        serialNoId = serial.id;
+      }
+
       if (type === 'TRANSFER' && req.body.toWarehouseId) {
         await postStockTransfer(tx, {
           productId,
@@ -87,6 +105,9 @@ export const createStockMovement = async (req: Request, res: Response) => {
 
     return success(res, movement, 'Stock movement recorded', 201);
   } catch (err: any) {
-    return handlePrismaError(res, err);
+      if (err instanceof Error && !('code' in err)) {
+        return error(res, err.message, 400);
+      }
+      return handlePrismaError(res, err);
   }
 };
