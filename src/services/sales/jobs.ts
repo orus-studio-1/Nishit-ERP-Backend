@@ -107,3 +107,48 @@ export async function processSalesCommitmentAlerts() {
   }
   return { scannedOrders: orders.length, createdAlerts: created };
 }
+
+export async function processSalesInvoiceMonitoring() {
+  const now = new Date();
+  
+  const overdueInvoices = await prisma.salesInvoice.findMany({
+    where: { status: 'SUBMITTED', outstandingAmount: { gt: 0 }, dueDate: { lt: now } },
+    include: { customer: true },
+  });
+
+  const companyIds = [...new Set(overdueInvoices.map(i => i.companyId).filter(Boolean))] as string[];
+
+  for (const companyId of companyIds) {
+    const users = await prisma.user.findMany({
+      where: { companyId, isActive: true, role: { in: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'SALES_REP'] } },
+      select: { id: true, email: true },
+    });
+
+    for (const user of users) {
+      for (const inv of overdueInvoices.filter(i => i.companyId === companyId)) {
+        const daysOverdue = Math.ceil((now.getTime() - new Date(inv.dueDate!).getTime()) / 86400000);
+        const type = `SALES_INVOICE_OVERDUE:${inv.id}`;
+        const existing = await prisma.notification.findFirst({ where: { userId: user.id, type, isRead: false } });
+        const message = `Invoice ${inv.invoiceNo} for ${inv.customer.name} was due on ${new Date(inv.dueDate!).toLocaleDateString()} (${daysOverdue} day${daysOverdue === 1 ? '' : 's'} overdue). Outstanding: ${inv.currency} ${inv.outstandingAmount}.`;
+        
+        if (existing) {
+          await prisma.notification.update({ where: { id: existing.id }, data: { message, link: `/invoicing/sales-invoices/${inv.id}` } });
+        } else {
+          await prisma.notification.create({
+            data: {
+              companyId,
+              userId: user.id,
+              type,
+              title: `Invoice overdue: ${inv.customer.name}`,
+              message,
+              link: `/invoicing/sales-invoices/${inv.id}`,
+            },
+          });
+          if (user.email) await sendSystemMail({ to: user.email, subject: `Invoice overdue: ${inv.customer.name}`, text: message });
+        }
+      }
+    }
+  }
+
+  return { overdueInvoices: overdueInvoices.length };
+}

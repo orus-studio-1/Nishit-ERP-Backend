@@ -38,7 +38,7 @@ import { runDueSubscriptionsJob } from './controllers/invoicingExtras.controller
 import prisma from './lib/prisma';
 import { workOne } from './services/platform/job.service';
 import { processCrmReminders } from './services/crm/jobs';
-import { processSalesCommitmentAlerts, processSalesExpiry } from './services/sales/jobs';
+import { processSalesCommitmentAlerts, processSalesExpiry, processSalesInvoiceMonitoring } from './services/sales/jobs';
 import { processInventoryMonitoring } from './services/inventory/jobs';
 import { processProcurementMonitoring } from './services/procurement/jobs';
 
@@ -208,6 +208,7 @@ if (process.env.ENABLE_BACKGROUND_WORKER !== 'false') {
   const workSalesCommitments = guarded('Sales commitment alert worker', () => processSalesCommitmentAlerts());
   const workInventoryMonitoring = guarded('Inventory monitoring worker', () => processInventoryMonitoring());
   const workProcurementMonitoring = guarded('Procurement monitoring worker', () => processProcurementMonitoring());
+  const workSalesInvoiceMonitoring = guarded('Sales invoice monitoring worker', () => processSalesInvoiceMonitoring());
 
   // Run each worker once on startup so due delivery and stock alerts are not
   // delayed by an hour after a deploy or process restart.
@@ -217,6 +218,7 @@ if (process.env.ENABLE_BACKGROUND_WORKER !== 'false') {
   void workSalesCommitments();
   void workInventoryMonitoring();
   void workProcurementMonitoring();
+  void workSalesInvoiceMonitoring();
 
   setInterval(workBackgroundJobs, 15_000);
   setInterval(workCrmReminders, 60_000);
@@ -226,6 +228,7 @@ if (process.env.ENABLE_BACKGROUND_WORKER !== 'false') {
   // caused by reservations/imports and reconciles recovered stock promptly.
   setInterval(workInventoryMonitoring, 5 * 60 * 1000);
   setInterval(workProcurementMonitoring, 60 * 60 * 1000);
+  setInterval(workSalesInvoiceMonitoring, 60 * 60 * 1000);
 }
 
 let shuttingDown = false;
