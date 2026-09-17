@@ -56,16 +56,20 @@ export const getStockMovements = async (req: Request, res: Response) => {
 
 export const createStockMovement = async (req: Request, res: Response) => {
   try {
-    const { productId, warehouseId, type, quantity, unitCost, reference, notes, batchId, batchNo, serialNoId, serialNo } = req.body;
+    const { productId, warehouseId, type, quantity, unitCost, reference, notes, batchId, batchNo, batchNumber, serialNoId, serialNo, serialNumber } = req.body;
 
     const movement = await prisma.$transaction(async (tx) => {
       const created = await tx.stockMovement.create({
         data: { productId, warehouseId, type, quantity, unitCost, reference, notes },
         include: { product: true, warehouse: true },
       });
-      
-      const resolved = await resolveBatchAndSerial(tx, { productId, batchId, batchNo, serialNoId, serialNo }, warehouseId);
-
+      const resolved = await resolveBatchAndSerial(tx, { 
+        productId, 
+        batchId, 
+        batchNo: batchNo || batchNumber, 
+        serialNoId, 
+        serialNo: serialNo || serialNumber 
+      }, warehouseId);
       if (type === 'TRANSFER' && req.body.toWarehouseId) {
         await postStockTransfer(tx, {
           productId,
