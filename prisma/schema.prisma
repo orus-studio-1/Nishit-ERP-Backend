@@ -414,6 +414,8 @@ model Account {
   isActive                  Boolean      @default(true)
   balance                   Decimal      @default(0) @db.Decimal(18, 6)
   currency                  String       @default("INR")
+  tallyGuid                 String?      @unique
+  tallyRawData              Json?
   createdAt                 DateTime     @default(now())
   updatedAt                 DateTime     @updatedAt
 
@@ -429,6 +431,7 @@ model Account {
   fixedAssets              FixedAsset[]           @relation("AssetAccount")
 
   @@unique([companyId, code])
+  @@unique([companyId, tallyGuid])
   @@index([companyId])
 }
 
@@ -2648,6 +2651,7 @@ model Customer {
   zip           String?
   taxId         String?
   currency      String   @default("INR")
+  tallyGuid     String?
   creditLimit   Decimal  @default(0) @db.Decimal(18, 6)
   paymentTerms  Int      @default(30)
   customerGroup String?
@@ -2657,6 +2661,7 @@ model Customer {
   holdReason    String?
   notes         String?
   isActive      Boolean  @default(true)
+  tallyRawData  Json?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -2671,6 +2676,7 @@ model Customer {
   subscriptions  SubscriptionTemplate[]
   opportunities  Opportunity[]
 
+  @@unique([companyId, tallyGuid])
   @@index([companyId])
 }
 
@@ -2688,11 +2694,13 @@ model Supplier {
   zip                      String?
   taxId                    String?
   currency                 String    @default("INR")
+  tallyGuid                String?
   paymentTerms             Int       @default(30)
   bankAccount              String?
   bankName                 String?
   notes                    String?
   isActive                 Boolean   @default(true)
+  tallyRawData             Json?
   panAvailable             Boolean   @default(false)
   pan                      String?
   tdsSection               String?
@@ -2722,6 +2730,7 @@ model Supplier {
   purchaseReturns       PurchaseReturn[]
   ratingHistory         VendorRatingHistory[]
 
+  @@unique([companyId, tallyGuid])
   @@index([companyId])
 }
 
@@ -3147,6 +3156,8 @@ model SalesInvoice {
   assignedToId       String?
   assignedTo         User?                @relation("SalesInvoiceAssignedTo", fields: [assignedToId], references: [id])
   tags               String[]             @default([])
+  tallyGuid          String?
+  tallyRawData       Json?
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
 
@@ -3166,6 +3177,7 @@ model SalesInvoice {
   @@index([assignedToId])
   @@index([dueDate])
   @@index([companyId])
+  @@unique([companyId, tallyGuid])
 }
 
 model DeliveryNote {
@@ -3990,6 +4002,8 @@ model PurchaseInvoice {
   notes             String?
   submittedAt       DateTime?
   cancelledAt       DateTime?
+  tallyGuid         String?
+  tallyRawData      Json?
   createdAt         DateTime               @default(now())
   updatedAt         DateTime               @updatedAt
   supplierInvoiceNo String?
@@ -4017,6 +4031,7 @@ model PurchaseInvoice {
   @@index([supplierId, status])
   @@index([purchaseOrderId])
   @@index([purchaseReceiptId])
+  @@unique([companyId, tallyGuid])
 }
 
 model PurchaseInvoiceItem {
@@ -5191,4 +5206,20 @@ model WebhookDelivery {
   createdAt      DateTime            @default(now())
 
   @@index([tenantId, status, nextAttemptAt])
+}
+
+model TallySyncHistory {
+  id              String   @id @default(cuid())
+  companyId       String?
+  syncType        String   // e.g. "VOUCHERS", "LEDGERS"
+  status          String   // e.g. "SUCCESS", "PARTIAL_SUCCESS", "FAILED"
+  fromDate        String?
+  toDate          String?
+  recordsProcessed Int     @default(0)
+  recordsCreated   Int     @default(0)
+  recordsUpdated   Int     @default(0)
+  skippedRecords   Json?   // [{ invoiceNo, tallyGuid, partyName, reason }]
+  errorMessage     String?
+  startedAt        DateTime @default(now())
+  completedAt      DateTime?
 }
