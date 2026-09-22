@@ -66,14 +66,12 @@ export async function processProcurementMonitoring() {
   const now = new Date();
 
   // --- Fetch overdue Purchase Orders ---
-  // These are POs that have been confirmed/sent/receiving but the expected delivery date has passed
   const overdueOrders = await prisma.purchaseOrder.findMany({
     where: { status: { in: ['CONFIRMED', 'SENT', 'RECEIVING'] }, expectedDate: { lt: now } },
     include: { supplier: true },
   });
 
   // --- Fetch overdue MSME invoices ---
-  // MSME suppliers have special payment compliance rules in India (must pay within 45 days)
   const msmeInvoices = await prisma.purchaseInvoice.findMany({
     where: { supplier: { msmeRegistered: true }, outstandingAmount: { gt: 0 }, dueDate: { lt: now } },
     include: { supplier: true },
@@ -94,8 +92,6 @@ export async function processProcurementMonitoring() {
 
     for (const user of users) {
       // --- OVERDUE PURCHASE ORDER ALERTS (per PO) ---
-      // Each overdue PO gets its own notification so the user can act on them individually.
-      // Type format: "PO_OVERDUE:{purchaseOrderId}" to prevent duplicates.
       for (const po of overdueOrders.filter(o => o.companyId === companyId)) {
         const daysOverdue = Math.ceil((now.getTime() - new Date(po.expectedDate!).getTime()) / 86400000);
         const type = `PO_OVERDUE:${po.id}`;
@@ -109,8 +105,6 @@ export async function processProcurementMonitoring() {
       }
 
       // --- MSME INVOICE OVERDUE ALERTS (per invoice) ---
-      // MSME compliance is critical — late payment to MSME suppliers can attract penalties.
-      // Type format: "MSME_OVERDUE:{purchaseInvoiceId}" to prevent duplicates.
       for (const inv of msmeInvoices.filter(i => i.companyId === companyId)) {
         const daysOverdue = Math.ceil((now.getTime() - new Date(inv.dueDate!).getTime()) / 86400000);
         const type = `MSME_OVERDUE:${inv.id}`;

@@ -21,11 +21,6 @@ export async function processInventoryMonitoring() {
     for (const user of users) {
       const exists = await prisma.notification.findFirst({ where: { companyId, userId: user.id, type: 'INVENTORY_NIGHTLY_ALERT', createdAt: { gte: since } } });
       if (!exists && (companyReorder || companyExpiry || companyMismatch)) await prisma.notification.create({ data: { companyId, userId: user.id, type: 'INVENTORY_NIGHTLY_ALERT', title: 'Inventory attention required', message: `${companyReorder} reorder item(s), ${companyExpiry} expiring batch(es), ${companyMismatch} ledger mismatch(es)`, link: '/inventory/reports/advanced' } });
-      // --- LOW STOCK ALERTS (per product per warehouse) ---
-      // Loop through each low-stock item for this company.
-      // Uses a unique notification type like "LOW_STOCK:productId:warehouseId" to avoid duplicates.
-      // If an unread notification already exists for this item → update the message (keeps it fresh).
-      // If not → create a new notification.
       for (const level of reorder.filter(row => row.product.companyId === companyId)) {
         const rule = level.product.warehouseRules.find(row => row.warehouseId === level.warehouseId);
         const threshold = rule?.reorderLevel ?? level.product.reorderLevel ?? level.product.minStockLevel;
@@ -41,19 +36,10 @@ export async function processInventoryMonitoring() {
       }
 
       // --- BATCH EXPIRY ALERTS (per batch) ---
-      // Same pattern as low-stock above.
-      // Loop through each batch expiring within 30 days for this company.
-      // Uses a unique notification type like "BATCH_EXPIRY:batchId" to avoid duplicates.
-      // If an unread notification already exists for this batch → update the message (days remaining may have changed).
-      // If not → create a new notification.
       for (const batch of expiring.filter(row => row.companyId === companyId)) {
-        // Calculate how many days until this batch expires
         const daysLeft = Math.ceil((new Date(batch.expiryDate!).getTime() - Date.now()) / 86400000);
-        // Unique type per batch so we don't create duplicate notifications
         const type = `BATCH_EXPIRY:${batch.id}`;
-        // Check if an unread notification already exists for this batch
         const existingExpiry = await prisma.notification.findFirst({ where: { userId: user.id, type, isRead: false } });
-        // Build the notification message with all relevant details
         const message = `${batch.batchNo} · ${batch.product.sku} · ${batch.product.name} expires on ${new Date(batch.expiryDate!).toLocaleDateString()}${daysLeft <= 0 ? ' (EXPIRED)' : ` (${daysLeft} day${daysLeft === 1 ? '' : 's'} remaining)`}. Qty: ${new D(batch.quantity).toString()}.`;
         // If notification exists → update message; if not → create new one
         if (existingExpiry) await prisma.notification.update({ where: { id: existingExpiry.id }, data: { title: daysLeft <= 0 ? `Batch expired: ${batch.product.name}` : `Batch expiring: ${batch.product.name}`, message, link: '/inventory/traceability' } });

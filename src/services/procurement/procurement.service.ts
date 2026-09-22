@@ -197,6 +197,16 @@ export async function submitPurchaseReceipt(receiptId: string, context: { tenant
     const inspectionRequired = receipt.items.some((item: any) => item.product.receiptInspectionRequired);
     if (settings?.requireInspectionForConfiguredItems && inspectionRequired && !receipt.inspectionCompleted) throw new Error('Incoming inspection must be completed before GRN submission');
     for (const item of receipt.items) {
+      let batchId;
+      if (item.product.hasBatchNo) {
+        if (!item.batchNo) throw new Error(`Batch number is required for ${item.product.sku || item.product.name}`);
+        let batch = await tx.batch.findFirst({ where: { batchNo: item.batchNo, productId: item.productId } });
+        if (!batch) {
+          batch = await tx.batch.create({ data: { companyId: receipt.companyId, batchNo: item.batchNo, productId: item.productId, warehouseId: item.warehouseId, supplierBatchNo: item.supplierBatchNo, supplierId: receipt.supplierId, quantity: 0 } });
+        }
+        batchId = batch.id;
+      }
+
       const accepted = new D(item.acceptedQty || item.receivedQty || 0).mul(item.conversionFactor || 1);
       if (accepted.gt(0)) {
         await postStockLedger(tx, {
@@ -209,6 +219,7 @@ export async function submitPurchaseReceipt(receiptId: string, context: { tenant
           voucherNo: receipt.receiptNo,
           postingDate: receipt.postingDate,
           remarks: `Purchase receipt ${receipt.receiptNo}`,
+          batchId,
         });
       }
       const rejected = new D(item.rejectedQty || 0).mul(item.conversionFactor || 1);
@@ -218,6 +229,7 @@ export async function submitPurchaseReceipt(receiptId: string, context: { tenant
           productId: item.productId, warehouseId: receipt.rejectedWarehouseId, actualQty: rejected,
           rate: new D(item.valuationRate || item.rate || 0), voucherType: 'PURCHASE_RECEIPT', voucherId: receipt.id,
           voucherNo: receipt.receiptNo, postingDate: receipt.postingDate, remarks: `Rejected stock from ${receipt.receiptNo}`,
+          batchId,
         });
       }
       if (item.purchaseOrderItemId) {
@@ -245,7 +257,12 @@ export async function submitPurchaseInvoice(invoiceId: string) {
   if (matchSettings?.requireThreeWayMatch && candidate.matchStatus !== 'APPROVED_EXCEPTION') {
     const match = await runThreeWayMatch(invoiceId);
     if (match.status !== 'MATCHED' && match.status !== 'APPROVED_EXCEPTION') {
-      throw new Error(`Invoice posting blocked by three-way match: ${JSON.stringify(match.explanation)}`);
+      const exceptions = (match.explanation as any).exceptions || [];
+      const productIds = exceptions.map((e: any) => e.productId);
+      const products = await prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, name: true } });
+      const productMap = Object.fromEntries(products.map(p => [p.id, p.name]));
+      const messages = exceptions.map((e: any) => `${productMap[e.productId] || 'Product'}: ${e.explanation}`);
+      throw new Error(`Invoice posting blocked by three-way match tolerances.\nExceptions: ${messages.join(' | ')}`);
     }
   }
   return prisma.$transaction(async (tx: any) => {
