@@ -33,7 +33,6 @@ import dashboardRoutes from './routes/dashboard.routes';
 import accessRoutes from './routes/access.routes';
 import notificationRoutes from './routes/notifications.routes';
 import platformRoutes from './routes/platform.routes';
-import tallyRoutes from './routes/tally.routes';
 import { idempotency, mutationAudit, requestContext } from './middleware/platform';
 import { runDueSubscriptionsJob } from './controllers/invoicingExtras.controller';
 import prisma from './lib/prisma';
@@ -42,7 +41,6 @@ import { processCrmReminders } from './services/crm/jobs';
 import { processSalesCommitmentAlerts, processSalesExpiry } from './services/sales/jobs';
 import { processInventoryMonitoring } from './services/inventory/jobs';
 import { processProcurementMonitoring } from './services/procurement/jobs';
-import { initTallyJobs } from './services/tally/jobs';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -127,7 +125,6 @@ app.use('/api/customers', customersRoutes);
 app.use('/api/suppliers', suppliersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/tally', tallyRoutes);
 
 // Versioned API is canonical. Legacy /api mounts remain during client migration.
 app.use('/api/v1/auth', authRoutes);
@@ -150,7 +147,6 @@ app.use('/api/v1/customers', customersRoutes);
 app.use('/api/v1/suppliers', suppliersRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
-app.use('/api/v1/tally', tallyRoutes);
 app.use('/api/v1/platform', platformRoutes);
 
 app.get('/health', (req, res) => {
@@ -174,7 +170,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 const PORT = Number(process.env.PORT || 5000);
 const HOST = process.env.HOST || '0.0.0.0';
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`Nishit ERP Server running at http://${HOST}:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV}`);
 });
@@ -221,9 +217,6 @@ if (process.env.ENABLE_BACKGROUND_WORKER !== 'false') {
   void workSalesCommitments();
   void workInventoryMonitoring();
   void workProcurementMonitoring();
-  
-  // Initialize Tally background sync job
-  initTallyJobs();
 
   setInterval(workBackgroundJobs, 15_000);
   setInterval(workCrmReminders, 60_000);
