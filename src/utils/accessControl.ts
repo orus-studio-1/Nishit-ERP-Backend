@@ -37,6 +37,7 @@ export const ERP_MODULES = [
   { module: 'projects', label: 'Projects', resources: ['projects', 'tasks', 'milestones', 'comments', 'members'], actions: ['READ', 'CREATE', 'WRITE', 'DELETE', 'APPROVE', 'REPORT', 'EXPORT'] },
   { module: 'customers', label: 'Customers', resources: ['customers'], actions: ['READ', 'CREATE', 'WRITE', 'DELETE', 'REPORT', 'EXPORT', 'IMPORT'] },
   { module: 'suppliers', label: 'Suppliers', resources: ['suppliers'], actions: ['READ', 'CREATE', 'WRITE', 'DELETE', 'REPORT', 'EXPORT', 'IMPORT'] },
+  { module: 'incentives', label: 'Incentives', resources: ['schemes', 'calculations', 'contributions', 'invoices'], actions: ['READ', 'CREATE', 'WRITE', 'DELETE', 'MANAGE'] },
 ] as const;
 
 export function permissionKey(module: string, resource: string, action: string) {
@@ -99,7 +100,7 @@ export async function ensureSystemPermissions(tx: any = prisma) {
 
 const DEFAULT_ROLE_RULES: Record<string, { title: string; modules: string[]; actions?: string[]; super?: boolean }> = {
   SUPER_ADMIN: { title: 'Super Admin', modules: ['*'], super: true },
-  ADMIN: { title: 'Admin', modules: ['dashboard', 'company', 'access', 'accounting', 'inventory', 'hr', 'crm', 'sales', 'invoicing', 'procurement', 'projects', 'customers', 'suppliers'] },
+  ADMIN: { title: 'Admin', modules: ['dashboard', 'company', 'access', 'accounting', 'inventory', 'hr', 'crm', 'sales', 'invoicing', 'procurement', 'projects', 'customers', 'suppliers', 'incentives'] },
   HR_MANAGER: { title: 'HR Manager', modules: ['dashboard', 'hr'], actions: ['READ', 'CREATE', 'WRITE', 'APPROVE', 'SUBMIT', 'REPORT', 'EXPORT', 'MANAGE'] },
   ACCOUNTANT: { title: 'Accountant', modules: ['dashboard', 'accounting', 'invoicing', 'customers'], actions: ['READ', 'CREATE', 'WRITE', 'SUBMIT', 'CANCEL', 'REPORT', 'PRINT', 'EXPORT'] },
   SALES_MANAGER: { title: 'Sales Manager', modules: ['dashboard', 'sales', 'invoicing', 'customers', 'crm'], actions: ['READ', 'CREATE', 'WRITE', 'SUBMIT', 'REPORT', 'PRINT', 'EXPORT'] },

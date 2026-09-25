@@ -89,8 +89,14 @@ export const searchProducts = async (req: Request, res: Response) => {
 
 export const createProduct = async (req: Request, res: Response) => {
   try {
+    const data = pickDefined(req.body, productFields) as any;
+    if (!data.defaultWarehouseId) {
+      const warehouse = await prisma.warehouse.findFirst({ orderBy: { code: 'asc' } });
+      if (warehouse) data.defaultWarehouseId = warehouse.id;
+    }
+    
     const product = await prisma.product.create({
-      data: pickDefined(req.body, productFields) as any,
+      data,
       include: { category: true, unit: true },
     });
     return success(res, product, 'Product created', 201);
