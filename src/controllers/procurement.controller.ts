@@ -468,9 +468,12 @@ export const getProcurementTracker = async (req: Request, res: Response) => {
     const supplierId = req.query.supplierId as string | undefined;
     const orders = await prisma.purchaseOrder.findMany({ where: supplierId ? { supplierId } : {}, include: poInclude, orderBy: { createdAt: 'desc' }, take: 200 });
     return success(res, orders.map((po: any) => ({
+      id: po.id,
       supplier: po.supplier?.name,
       orderNo: po.orderNo,
       status: po.status,
+      date: po.date,
+      expectedDate: po.expectedDate,
       materialRequest: po.materialRequestId,
       rfq: po.rfqId,
       supplierQuotation: po.supplierQuotationId,
@@ -481,6 +484,14 @@ export const getProcurementTracker = async (req: Request, res: Response) => {
       receipts: po.receipts?.length || 0,
       invoices: po.invoices?.length || 0,
       payments: po.payments?.length || 0,
+      items: po.items?.map((item: any) => ({
+        product: item.product?.name,
+        sku: item.product?.sku,
+        ordered: Number(item.quantity),
+        received: Number(item.acceptedQty || 0),
+        pending: Math.max(0, Number(item.quantity) - Number(item.acceptedQty || 0) - Number(item.shortClosedQty || 0)),
+        uom: item.uom,
+      })) || [],
     })));
   } catch (err: any) { return handlePrismaError(res, err); }
 };

@@ -59,6 +59,8 @@ export async function getPurchaseOrderWorkspace(req: Request, res: Response) {
           },
         },
         receipts: { include: { items: { include: { product: true, warehouse: true } } }, orderBy: { postingDate: 'desc' } },
+        invoices: { include: { purchaseReceipt: true, items: { include: { product: true } } }, orderBy: { createdAt: 'desc' } },
+        payments: { orderBy: { date: 'desc' } },
         communications: { orderBy: { sentAt: 'desc' } },
         deliverySchedules: { orderBy: { scheduledDate: 'asc' } },
       },
@@ -101,7 +103,12 @@ export async function getPurchaseOrderWorkspace(req: Request, res: Response) {
     }), { orderedQty: 0, arrivedQty: 0, acceptedQty: 0, rejectedQty: 0, returnedQty: 0, remainingQty: 0 });
     const salesOrders = await relatedSalesOrders(po);
     const alerts = lines.filter((line: any) => line.overdue).map((line: any) => ({ type: 'OVERDUE', severity: 'HIGH', purchaseOrderItemId: line.id, productName: line.product.name, remainingQty: line.remainingQty, promisedDate: line.promisedDate, message: `${line.product.name}: ${line.remainingQty} ${line.uom || ''} overdue from ${po.supplier.name}` }));
-    return success(res, { purchaseOrder: po, lines, totals, receipts: po.receipts, communications: po.communications, relatedSalesOrders: salesOrders, alerts });
+    // Collect payments: directly linked to PO + linked through invoices
+    const directPayments = (po as any).payments || [];
+    const invoiceIds = ((po as any).invoices || []).map((inv: any) => inv.id);
+    const invoicePayments = invoiceIds.length ? await prisma.supplierPayment.findMany({ where: { purchaseInvoiceId: { in: invoiceIds }, id: { notIn: directPayments.map((p: any) => p.id) } }, orderBy: { date: 'desc' } }) : [];
+    const allPayments = [...directPayments, ...invoicePayments].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return success(res, { purchaseOrder: po, lines, totals, receipts: po.receipts, invoices: (po as any).invoices || [], payments: allPayments, communications: po.communications, relatedSalesOrders: salesOrders, alerts });
   } catch (e: any) { return error(res, e.message || 'Could not load purchase order workspace', 400); }
 }
 
