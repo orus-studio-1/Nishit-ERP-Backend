@@ -64,9 +64,66 @@ registerJobHandler('PROCUREMENT_FOLLOWUP_EMAIL', async ({ communicationId, to })
 
 export async function processProcurementMonitoring() {
   const now = new Date();
-  const [overdueOrders, msmeInvoices] = await Promise.all([
-    prisma.purchaseOrder.count({ where: { status: { in: ['CONFIRMED', 'SENT', 'RECEIVING'] }, expectedDate: { lt: now } } }),
-    prisma.purchaseInvoice.count({ where: { supplier: { msmeRegistered: true }, outstandingAmount: { gt: 0 }, dueDate: { lt: now } } }),
-  ]);
-  return { overdueOrders, msmeInvoices };
+
+  // --- Fetch overdue Purchase Orders ---
+  // These are POs that have been confirmed/sent/receiving but the expected delivery date has passed
+  const overdueOrders = await prisma.purchaseOrder.findMany({
+    where: { status: { in: ['CONFIRMED', 'SENT', 'RECEIVING'] }, expectedDate: { lt: now } },
+    include: { supplier: true },
+  });
+
+  // --- Fetch overdue MSME invoices ---
+  // MSME suppliers have special payment compliance rules in India (must pay within 45 days)
+  const msmeInvoices = await prisma.purchaseInvoice.findMany({
+    where: { supplier: { msmeRegistered: true }, outstandingAmount: { gt: 0 }, dueDate: { lt: now } },
+    include: { supplier: true },
+  });
+
+  // --- Get unique company IDs from all overdue items ---
+  const companyIds = [...new Set([
+    ...overdueOrders.map(o => o.companyId),
+    ...msmeInvoices.map(i => i.companyId),
+  ].filter(Boolean))] as string[];
+
+  for (const companyId of companyIds) {
+    // Find users who should receive procurement alerts
+    const users = await prisma.user.findMany({
+      where: { companyId, isActive: true, role: { in: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'PURCHASE_MANAGER'] } },
+      select: { id: true, email: true },
+    });
+
+    for (const user of users) {
+      // --- OVERDUE PURCHASE ORDER ALERTS (per PO) ---
+      // Each overdue PO gets its own notification so the user can act on them individually.
+      // Type format: "PO_OVERDUE:{purchaseOrderId}" to prevent duplicates.
+      for (const po of overdueOrders.filter(o => o.companyId === companyId)) {
+        const daysOverdue = Math.ceil((now.getTime() - new Date(po.expectedDate!).getTime()) / 86400000);
+        const type = `PO_OVERDUE:${po.id}`;
+        const existing = await prisma.notification.findFirst({ where: { userId: user.id, type, isRead: false } });
+        const message = `${po.orderNo} from ${po.supplier.name} was expected on ${new Date(po.expectedDate!).toLocaleDateString()} (${daysOverdue} day${daysOverdue === 1 ? '' : 's'} overdue). Total: ${po.currency} ${po.total}.`;
+        if (existing) await prisma.notification.update({ where: { id: existing.id }, data: { message, link: `/procurement/purchase-orders/${po.id}` } });
+        else {
+          await prisma.notification.create({ data: { companyId, userId: user.id, type, title: `PO overdue: ${po.supplier.name}`, message, link: `/procurement/purchase-orders/${po.id}` } });
+          if (user.email) await sendSystemMail({ to: user.email, subject: `PO overdue: ${po.supplier.name}`, text: message });
+        }
+      }
+
+      // --- MSME INVOICE OVERDUE ALERTS (per invoice) ---
+      // MSME compliance is critical — late payment to MSME suppliers can attract penalties.
+      // Type format: "MSME_OVERDUE:{purchaseInvoiceId}" to prevent duplicates.
+      for (const inv of msmeInvoices.filter(i => i.companyId === companyId)) {
+        const daysOverdue = Math.ceil((now.getTime() - new Date(inv.dueDate!).getTime()) / 86400000);
+        const type = `MSME_OVERDUE:${inv.id}`;
+        const existing = await prisma.notification.findFirst({ where: { userId: user.id, type, isRead: false } });
+        const message = `${inv.invoiceNo} from ${inv.supplier.name} (MSME) was due on ${new Date(inv.dueDate!).toLocaleDateString()} (${daysOverdue} day${daysOverdue === 1 ? '' : 's'} overdue). Outstanding: ₹${inv.outstandingAmount}.`;
+        if (existing) await prisma.notification.update({ where: { id: existing.id }, data: { message, link: `/procurement/purchase-invoices` } });
+        else {
+          await prisma.notification.create({ data: { companyId, userId: user.id, type, title: `MSME payment overdue: ${inv.supplier.name}`, message, link: `/procurement/purchase-invoices` } });
+          if (user.email) await sendSystemMail({ to: user.email, subject: `MSME payment overdue: ${inv.supplier.name}`, text: message });
+        }
+      }
+    }
+  }
+
+  return { overdueOrders: overdueOrders.length, msmeInvoices: msmeInvoices.length };
 }

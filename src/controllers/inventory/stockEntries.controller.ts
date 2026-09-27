@@ -189,7 +189,8 @@ export const createStockEntry = async (req: Request, res: Response) => {
           if (!warehouseId) throw new Error('Warehouse is required to create a batch');
           const product = await tx.product.findUnique({ where: { id: item.productId } });
           const existingBatch = await tx.batch.findFirst({ where: { companyId: product?.companyId, productId: item.productId, warehouseId, batchNo: String(item.batchNo).trim() } });
-          const batch = existingBatch || await tx.batch.create({ data: { companyId: product?.companyId, productId: item.productId, warehouseId, batchNo: String(item.batchNo).trim(), quantity: 0 } });
+          const expiryDate = item.expiryDate ? new Date(item.expiryDate) : undefined;
+          const batch = existingBatch || await tx.batch.create({ data: { companyId: product?.companyId, productId: item.productId, warehouseId, batchNo: String(item.batchNo).trim(), quantity: 0, expiryDate } });
           batchId = batch.id;
         }
         if (!serialNoId && String(item.serialNo || '').trim()) {

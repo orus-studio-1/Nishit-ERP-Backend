@@ -1,5 +1,6 @@
 import prisma from '../../lib/prisma';
 import { registerJobHandler } from '../platform/job.service';
+import { sendSystemMail } from '../platform/mail.service';
 
 registerJobHandler('CRM_EXPORT_LEADS', async ({ exportJobId }) => {
   const job = await prisma.crmExportJob.findUnique({ where: { id: exportJobId } });
@@ -44,12 +45,24 @@ registerJobHandler('CRM_SYNC_MAILBOX', async (payload) => {
 });
 
 export async function processCrmReminders() {
-  const due = await prisma.activity.findMany({ where: { reminderAt: { lte: new Date() }, reminderSentAt: null, status: { notIn: ['COMPLETED', 'CANCELLED'] } }, take: 100 });
+  const due = await prisma.activity.findMany({ 
+    where: { reminderAt: { lte: new Date() }, reminderSentAt: null, status: { notIn: ['COMPLETED', 'CANCELLED'] } }, 
+    take: 100,
+    include: { user: { select: { email: true } } }
+  });
+  
   for (const activity of due) {
+    const title = activity.subject;
+    const message = activity.description || 'CRM activity reminder';
+
     await prisma.$transaction([
-      prisma.notification.create({ data: { companyId: activity.companyId, userId: activity.userId, type: 'CRM_REMINDER', title: activity.subject, message: activity.description || 'CRM activity reminder', link: `/crm/activities?id=${activity.id}` } }),
+      prisma.notification.create({ data: { companyId: activity.companyId, userId: activity.userId, type: 'CRM_REMINDER', title, message, link: `/crm/activities?id=${activity.id}` } }),
       prisma.activity.update({ where: { id: activity.id }, data: { reminderSentAt: new Date() } }),
     ]);
+
+    if (activity.user?.email) {
+      await sendSystemMail({ to: activity.user.email, subject: `CRM Reminder: ${title}`, text: message });
+    }
   }
   return due.length;
 }
