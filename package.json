@@ -17,7 +17,8 @@
     "incentive:api-check": "tsx src/scripts/poc/incentiveApiCheck.ts",
     "seed:incentives": "tsx src/scripts/seed-incentives.ts",
     "seed": "tsx src/scripts/seed.ts",
-    "seed:inventory": "tsx src/scripts/seed-inventory.ts"
+    "seed:inventory": "tsx src/scripts/seed-inventory.ts",
+    "sync:tally": "tsx src/scripts/run-tally-sync.ts"
   },
   "keywords": [],
   "author": "",
