@@ -34,6 +34,8 @@ import accessRoutes from './routes/access.routes';
 import notificationRoutes from './routes/notifications.routes';
 import platformRoutes from './routes/platform.routes';
 import incentiveRoutes from './routes/incentives.routes';
+import tallyRoutes from './routes/tally.routes';
+import tallyAgentRoutes from './routes/tallyAgent.routes';
 import { idempotency, mutationAudit, requestContext } from './middleware/platform';
 import { runDueSubscriptionsJob } from './controllers/invoicingExtras.controller';
 import prisma from './lib/prisma';
@@ -127,6 +129,8 @@ app.use('/api/suppliers', suppliersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/incentives', incentiveRoutes);
+app.use('/api/tally', tallyRoutes);
+app.use('/api/tally/agent', tallyAgentRoutes);
 
 // Versioned API is canonical. Legacy /api mounts remain during client migration.
 app.use('/api/v1/auth', authRoutes);
@@ -150,6 +154,8 @@ app.use('/api/v1/suppliers', suppliersRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/incentives', incentiveRoutes);
+app.use('/api/v1/tally', tallyRoutes);
+app.use('/api/v1/tally/agent', tallyAgentRoutes);
 app.use('/api/v1/platform', platformRoutes);
 
 app.get('/health', (req, res) => {
