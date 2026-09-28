@@ -92,7 +92,9 @@ export const createSalesOrder = async (req: Request, res: Response) => {
           deliveryTerms: req.body.deliveryTerms,
           transporterInfo: req.body.transporterInfo,
           eWayBillNo: req.body.eWayBillNo,
-          items: { create: calculated.items.map((item: any, index: number) => ({ ...item, sourceWarehouseId, supplyMode: items[index]?.supplyMode || 'MAKE_TO_STOCK', backorderQty: 0 })) },
+          // normalizeSalesItems is shared with Quotation creation, whose items support hsnCode/brand/
+          // costRate/marginPercent/priceSource; SalesOrderItem has no such columns, so drop them here.
+          items: { create: calculated.items.map(({ hsnCode: _hsnCode, brand: _brand, costRate: _costRate, marginPercent: _marginPercent, priceSource: _priceSource, ...item }: any, index: number) => ({ ...item, sourceWarehouseId, supplyMode: items[index]?.supplyMode || 'MAKE_TO_STOCK', backorderQty: 0 })) },
         },
         include: { customer: true, items: { include: { product: true } } },
       });
@@ -145,7 +147,7 @@ export const updateSalesOrder = async (req : Request , res: Response)=>{
           notes,
           terms,
           items: {
-            create: calculated.items.map((item: any, index: number) => ({ ...item, sourceWarehouseId: sourceWarehouseId ?? existingOrder.sourceWarehouseId, supplyMode: items[index]?.supplyMode || 'MAKE_TO_STOCK', backorderQty: 0 })),
+            create: calculated.items.map(({ hsnCode: _hsnCode, brand: _brand, costRate: _costRate, marginPercent: _marginPercent, priceSource: _priceSource, ...item }: any, index: number) => ({ ...item, sourceWarehouseId: sourceWarehouseId ?? existingOrder.sourceWarehouseId, supplyMode: items[index]?.supplyMode || 'MAKE_TO_STOCK', backorderQty: 0 })),
           },
         },
         include: { customer: true, items: { include: { product: true } } },

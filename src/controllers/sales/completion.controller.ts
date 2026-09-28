@@ -419,6 +419,7 @@ export async function getCreditExposure(req: Request, res: Response) {
 export async function orderOperation(req: Request, res: Response) {
   try {
     const operation = req.params.operation;
+    req.body = req.body || {};
     const row = await prisma.$transaction(async tx => {
       const order = await tx.salesOrder.findUnique({ where: { id: req.params.id }, include: { items: true, customer: true } });
       if (!order) throw new Error('Sales order not found');

@@ -489,12 +489,17 @@ export async function deleteSlab(schemeId: string, slabId: string) {
  */
 export async function getSchemeSummary(schemeId: string) {
   const scheme = await getSchemeOrThrow(schemeId, true);
-  const [totals, contributionCount, lastRun, lastCompletedRun] = await Promise.all([
+  const [totals, contributionCount, settledTotals, settledCount, lastRun, lastCompletedRun] = await Promise.all([
     prisma.incentiveContribution.aggregate({
       where: { schemeId, lifecycleStatus: 'ACTIVE' },
       _sum: { eligibleValue: true, eligibleQuantity: true, rewardEligibleValue: true, rewardEligibleQuantity: true, incentiveAmount: true, altIncentiveAmount: true },
     }),
     prisma.incentiveContribution.count({ where: { schemeId, lifecycleStatus: 'ACTIVE' } }),
+    prisma.incentiveContribution.aggregate({
+      where: { schemeId, lifecycleStatus: 'ACTIVE', settlementStatus: 'SETTLED' },
+      _sum: { settledAmount: true },
+    }),
+    prisma.incentiveContribution.count({ where: { schemeId, lifecycleStatus: 'ACTIVE', settlementStatus: 'SETTLED' } }),
     prisma.incentiveCalculationRun.findFirst({ where: { schemeId }, orderBy: { startedAt: 'desc' } }),
     prisma.incentiveCalculationRun.findFirst({ where: { schemeId, status: 'COMPLETED' }, orderBy: { startedAt: 'desc' } }),
   ]);
@@ -541,6 +546,9 @@ export async function getSchemeSummary(schemeId: string) {
       primaryAmount: new D(totals._sum.incentiveAmount ?? 0).toString(),
       alternateAmount: totals._sum.altIncentiveAmount === null ? null : new D(totals._sum.altIncentiveAmount ?? 0).toString(),
       note: 'Estimated from the last completed calculation. Not a settled or approved amount.',
+      settledAmount: new D(settledTotals._sum.settledAmount ?? 0).toString(),
+      settledCount,
+      pendingCount: Math.max(0, contributionCount - settledCount),
     },
     progress: {
       currentSlab: slabView(progress.currentSlab),
@@ -553,4 +561,50 @@ export async function getSchemeSummary(schemeId: string) {
       lastCompletedAt: lastCompletedRun?.completedAt ?? null,
     },
   };
+}
+
+export interface SettleContributionDto {
+  settledAmount?: number | string;
+  settledReference?: string;
+  settledAt?: string;
+  notes?: string;
+  userId?: string;
+}
+
+/** Records that a contribution's incentive amount was actually received (e.g. a credit note from
+ * the manufacturer). This is manual bookkeeping only — see the module notes on why there is no
+ * automatic settlement/credit-note processing. */
+export async function settleContribution(schemeId: string, contributionId: string, input: SettleContributionDto) {
+  await getSchemeOrThrow(schemeId);
+  const contribution = await prisma.incentiveContribution.findFirst({ where: { id: contributionId, schemeId } });
+  if (!contribution) throw new IncentiveNotFoundError('Contribution not found');
+  if (contribution.lifecycleStatus !== 'ACTIVE') throw new IncentiveValidationError('Only an active contribution can be marked as received; this one was superseded or reversed.');
+  if (contribution.settlementStatus === 'SETTLED') throw new IncentiveValidationError('This contribution is already marked as received.');
+  const settledAmount = input.settledAmount !== undefined && input.settledAmount !== null && input.settledAmount !== ''
+    ? new D(input.settledAmount)
+    : contribution.incentiveAmount;
+  if (settledAmount.lt(0)) throw new IncentiveValidationError('Settled amount cannot be negative.');
+  return prisma.incentiveContribution.update({
+    where: { id: contributionId },
+    data: {
+      settlementStatus: 'SETTLED',
+      settledAmount,
+      settledAt: input.settledAt ? new Date(input.settledAt) : new Date(),
+      settledReference: input.settledReference?.trim() || undefined,
+      settledById: input.userId,
+      settlementNotes: input.notes?.trim() || undefined,
+    },
+  });
+}
+
+/** Reverts a settled contribution back to pending, e.g. after a data-entry mistake. */
+export async function unsettleContribution(schemeId: string, contributionId: string) {
+  await getSchemeOrThrow(schemeId);
+  const contribution = await prisma.incentiveContribution.findFirst({ where: { id: contributionId, schemeId } });
+  if (!contribution) throw new IncentiveNotFoundError('Contribution not found');
+  if (contribution.settlementStatus !== 'SETTLED') throw new IncentiveValidationError('This contribution is not marked as received.');
+  return prisma.incentiveContribution.update({
+    where: { id: contributionId },
+    data: { settlementStatus: 'PENDING', settledAmount: null, settledAt: null, settledReference: null, settledById: null, settlementNotes: null },
+  });
 }

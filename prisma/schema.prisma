@@ -5347,6 +5347,11 @@ enum IncentiveContributionStatus {
   REVERSED
 }
 
+enum IncentiveSettlementStatus {
+  PENDING
+  SETTLED
+}
+
 enum IncentiveRunStatus {
   RUNNING
   COMPLETED
@@ -5379,9 +5384,12 @@ model IncentiveScheme {
   allowAnySupplier         Boolean                    @default(false)
   rewardExcludedProductIds String[]                   @default([])
   includedCategoryIds      String[]                   @default([])
+  includedProductIds       String[]                   @default([])
   returnHandling           String                     @default("IGNORE_RETURNS")
   paymentConditionDays     Int?
   minInvoiceValue          Decimal?                   @db.Decimal(18, 6)
+  maximumIncentiveCap      Decimal?                   @db.Decimal(18, 6)
+  baselineVolume           Decimal?                   @db.Decimal(18, 6)
   eligibilityDateBasis     String                     @default("INVOICE_DATE")
   autoCalculate            String                     @default("MANUAL")
   eligibleBranchIds        String[]                   @default([])
@@ -5458,12 +5466,20 @@ model IncentiveContribution {
   supersedes             IncentiveContribution?       @relation("ContributionSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
   supersededBy           IncentiveContribution[]      @relation("ContributionSupersedes")
 
+  settlementStatus       IncentiveSettlementStatus    @default(PENDING)
+  settledAmount          Decimal?                     @db.Decimal(18, 6)
+  settledAt              DateTime?
+  settledReference       String?
+  settledById            String?
+  settlementNotes        String?
+
   lines IncentiveContributionItem[]
 
   @@index([schemeId, purchaseInvoiceId, lifecycleStatus])
   @@index([purchaseInvoiceId])
   @@index([runId])
   @@index([slabId])
+  @@index([schemeId, settlementStatus])
 }
 
 model IncentiveContributionItem {

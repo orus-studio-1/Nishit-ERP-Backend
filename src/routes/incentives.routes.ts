@@ -12,6 +12,8 @@ import {
   listSchemes,
   removeSlab,
   setBillingType,
+  settleContributionHandler,
+  unsettleContributionHandler,
   updateScheme,
   updateSchemeStatus,
 } from '../controllers/incentives/incentives.controller';
@@ -34,6 +36,8 @@ export function createIncentiveRouter(auth: RequestHandler = authenticate) {
 
   router.get('/schemes/:id/summary', requirePermission('incentives', 'schemes', 'READ'), getSummary);
   router.get('/schemes/:id/contributions', requirePermission('incentives', 'contributions', 'READ'), listContributions);
+  router.post('/schemes/:id/contributions/:contributionId/settle', requirePermission('incentives', 'contributions', 'WRITE'), settleContributionHandler);
+  router.post('/schemes/:id/contributions/:contributionId/unsettle', requirePermission('incentives', 'contributions', 'WRITE'), unsettleContributionHandler);
   router.get('/schemes/:id/runs', requirePermission('incentives', 'calculations', 'READ'), listRuns);
   router.post('/schemes/:id/calculate', requirePermission('incentives', 'calculations', 'MANAGE'), calculateScheme);
 

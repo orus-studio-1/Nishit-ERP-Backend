@@ -20,6 +20,8 @@ import {
   deleteSlab,
   getSchemeOrThrow,
   getSchemeSummary,
+  settleContribution,
+  unsettleContribution,
   updateIncentiveScheme,
   updateSlab,
 } from '../../services/incentives/incentiveScheme.service';
@@ -172,6 +174,24 @@ export const listContributions = async (req: AuthRequest, res: Response) => {
       prisma.incentiveContribution.count({ where }),
     ]);
     return paginated(res, items, total, page, limit);
+  } catch (err) {
+    return handleError(res, err);
+  }
+};
+
+export const settleContributionHandler = async (req: AuthRequest, res: Response) => {
+  try {
+    const updated = await settleContribution(req.params.id, req.params.contributionId, { ...(req.body ?? {}), userId: req.user?.id });
+    return success(res, updated, 'Contribution marked as received');
+  } catch (err) {
+    return handleError(res, err);
+  }
+};
+
+export const unsettleContributionHandler = async (req: AuthRequest, res: Response) => {
+  try {
+    const updated = await unsettleContribution(req.params.id, req.params.contributionId);
+    return success(res, updated, 'Contribution reverted to pending');
   } catch (err) {
     return handleError(res, err);
   }
