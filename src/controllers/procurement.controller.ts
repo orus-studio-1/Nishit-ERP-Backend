@@ -268,6 +268,9 @@ export const deletePurchaseOrder = async (req: Request, res: Response) => {
 
 export const getPurchaseReceipts = async (req: Request, res: Response) => list(res, 'purchaseReceipt', req, req.query.status ? { status: req.query.status } : {}, purchaseReceiptInclude);
 export const createPurchaseReceipt = async (req: Request, res: Response) => {
+  console.log('--- PR CREATE PAYLOAD ---');
+  console.log(JSON.stringify(req.body, null, 2));
+
   try {
     if (req.body.purchaseOrderId) return success(res, await createPurchaseReceiptFromOrder(req.body.purchaseOrderId, req.body), 'Purchase receipt created from PO', 201);
     const items = purchaseReceiptItems(req.body.items || []);
