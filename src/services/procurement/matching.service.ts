@@ -26,7 +26,16 @@ export async function runThreeWayMatch(invoiceId: string, tx: any = prisma) {
   const freightVariance = new D(invoice.freightAmount || invoice.shippingAmount || 0).minus(invoice.purchaseOrder.shippingAmount || 0);
   const status = lines.every((line: any) => line.matched) ? 'MATCHED' : 'EXCEPTION';
   const explanation = { status, freightVariance: freightVariance.toString(), exceptions: lines.filter((line: any) => !line.matched).map((line: any) => ({ productId: line.productId, explanation: line.explanation })) };
-  const match = await tx.procurementThreeWayMatch.upsert({ where: { purchaseInvoiceId: invoice.id }, update: { purchaseOrderId: invoice.purchaseOrder.id, purchaseReceiptId: invoice.purchaseReceipt.id, status, rateTolerance, quantityTolerance, taxTolerance, freightVariance, explanation, lines: { deleteMany: {}, create: lines } }, create: { matchNo: `MATCH-${Date.now()}`, companyId: invoice.companyId, purchaseInvoiceId: invoice.id, purchaseOrderId: invoice.purchaseOrder.id, purchaseReceiptId: invoice.purchaseReceipt.id, status, rateTolerance, quantityTolerance, taxTolerance, freightVariance, explanation, lines: { create: lines } }, include: { lines: true } });
+  const updateData = { purchaseOrderId: invoice.purchaseOrder.id, purchaseReceiptId: invoice.purchaseReceipt.id, status, rateTolerance, quantityTolerance, taxTolerance, freightVariance, explanation, lines: { deleteMany: {}, create: lines } };
+  const createData = { matchNo: `MATCH-${Date.now()}`, companyId: invoice.companyId, purchaseInvoiceId: invoice.id, purchaseOrderId: invoice.purchaseOrder.id, purchaseReceiptId: invoice.purchaseReceipt.id, status, rateTolerance, quantityTolerance, taxTolerance, freightVariance, explanation, lines: { create: lines } };
+  let match;
+  try {
+    match = await tx.procurementThreeWayMatch.upsert({ where: { purchaseInvoiceId: invoice.id }, update: updateData, create: createData, include: { lines: true } });
+  } catch (err: any) {
+    // A concurrent submit for the same invoice can race the upsert's find/create; fall back to update if the row now exists.
+    if (err?.code !== 'P2002') throw err;
+    match = await tx.procurementThreeWayMatch.update({ where: { purchaseInvoiceId: invoice.id }, data: updateData, include: { lines: true } });
+  }
   await tx.purchaseInvoice.update({ where: { id: invoice.id }, data: { matchId: match.id, matchStatus: status, postingBlocked: status !== 'MATCHED' } });
   return match;
 }

@@ -148,6 +148,13 @@ export async function createPurchaseReceiptFromOrder(orderId: string, body: any 
     if (!['SENT', 'CONFIRMED', 'RECEIVING'].includes(order.status)) throw new Error('Only an open confirmed purchase order can be received');
     const receiptNo = await nextNo('purchaseReceipt', 'receiptNo', 'PREC', tx);
     const requested = new Map((Array.isArray(body.items) ? body.items : []).map((line: any) => [String(line.purchaseOrderItemId || line.id), line]));
+    let fallbackWarehouseId: string | undefined;
+    const needsFallbackWarehouse = order.items.some((item: any) => !item.product.defaultWarehouseId);
+    if (!body.warehouseId && needsFallbackWarehouse) {
+      const defaultWarehouse = await tx.warehouse.findFirst({ where: { isDefault: true, isFrozen: false }, orderBy: { createdAt: 'asc' } })
+        || await tx.warehouse.findFirst({ where: { isFrozen: false }, orderBy: { createdAt: 'asc' } });
+      fallbackWarehouseId = defaultWarehouse?.id;
+    }
     const items = order.items.flatMap((item: any) => {
       // Rejected material has arrived physically, but the supplier still owes a
       // replacement.  Supplier fulfilment is therefore based on accepted stock.
@@ -160,8 +167,8 @@ export async function createPurchaseReceiptFromOrder(orderId: string, body: any 
       if (accepted.lt(0) || rejected.lt(0)) throw new Error(`${item.product.name}: quantities cannot be negative`);
       if (received.gt(open)) throw new Error(`${item.product.name}: received quantity ${received} exceeds remaining ${open}`);
       if (received.lte(0)) return [];
-      const warehouseId = input?.warehouseId || body.warehouseId || item.product.defaultWarehouseId;
-      if (!warehouseId) throw new Error(`${item.product.name}: receiving warehouse is required`);
+      const warehouseId = input?.warehouseId || body.warehouseId || item.product.defaultWarehouseId || fallbackWarehouseId;
+      if (!warehouseId) throw new Error(`${item.product.name}: receiving warehouse is required. Set a default warehouse for this product, or mark one warehouse as default.`);
       return [{ purchaseOrderItemId: item.id, productId: item.productId, warehouseId, description: item.description, receivedQty: received, acceptedQty: accepted, rejectedQty: rejected, rate: item.unitPrice, valuationRate: item.unitPrice, uom: item.uom, stockUom: item.stockUom, conversionFactor: item.conversionFactor || 1, supplierBatchNo: input?.supplierBatchNo, batchNo: input?.batchNo, serialNo: input?.serialNo }];
     });
     if (!items.length) throw new Error('All purchase order items are already received');

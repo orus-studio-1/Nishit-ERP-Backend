@@ -33,6 +33,9 @@ import dashboardRoutes from './routes/dashboard.routes';
 import accessRoutes from './routes/access.routes';
 import notificationRoutes from './routes/notifications.routes';
 import platformRoutes from './routes/platform.routes';
+import incentiveRoutes from './routes/incentives.routes';
+import tallyRoutes from './routes/tally.routes';
+import tallyAgentRoutes from './routes/tallyAgent.routes';
 import { idempotency, mutationAudit, requestContext } from './middleware/platform';
 import { runDueSubscriptionsJob } from './controllers/invoicingExtras.controller';
 import prisma from './lib/prisma';
@@ -125,6 +128,9 @@ app.use('/api/customers', customersRoutes);
 app.use('/api/suppliers', suppliersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/incentives', incentiveRoutes);
+app.use('/api/tally', tallyRoutes);
+app.use('/api/tally/agent', tallyAgentRoutes);
 
 // Versioned API is canonical. Legacy /api mounts remain during client migration.
 app.use('/api/v1/auth', authRoutes);
@@ -147,6 +153,9 @@ app.use('/api/v1/customers', customersRoutes);
 app.use('/api/v1/suppliers', suppliersRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/incentives', incentiveRoutes);
+app.use('/api/v1/tally', tallyRoutes);
+app.use('/api/v1/tally/agent', tallyAgentRoutes);
 app.use('/api/v1/platform', platformRoutes);
 
 app.get('/health', (req, res) => {
@@ -170,7 +179,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 const PORT = Number(process.env.PORT || 5000);
 const HOST = process.env.HOST || '0.0.0.0';
-const server = app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, () => {
   console.log(`Nishit ERP Server running at http://${HOST}:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV}`);
 });

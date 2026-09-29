@@ -1,0 +1,1 @@
+import prisma from './src/lib/prisma'; import bcrypt from 'bcryptjs'; async function main() { const hash = await bcrypt.hash('password123', 10); await prisma.user.updateMany({ where: { email: 'yug2019raj@gmail.com' }, data: { password: hash } }); console.log('Reset complete!'); } main();

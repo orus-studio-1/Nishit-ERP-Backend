@@ -59,9 +59,19 @@ export const register = async (req: Request, res: Response) => {
     if (!email || invalid || !firstName || !lastName) return error(res, invalid || 'Email, first name and last name are required', 400, undefined, 'VALIDATION_ERROR');
     if (await prisma.user.findUnique({ where: { email } })) return error(res, 'Email already registered', 409, undefined, 'EMAIL_EXISTS');
     const created = await prisma.$transaction(async (tx: any) => {
-      let company = process.env.STANDALONE_COMPANY_ID
-        ? await tx.company.findUnique({ where: { id: process.env.STANDALONE_COMPANY_ID } })
-        : await tx.company.findFirst({ orderBy: { createdAt: 'asc' } });
+      let company: any = null;
+      if (process.env.STANDALONE_COMPANY_ID) {
+        company = await tx.company.findUnique({ where: { id: process.env.STANDALONE_COMPANY_ID } });
+      } else {
+        // Check if any company exists at all (for first-time bootstrap)
+        const existingCompanyCount = await tx.company.count();
+        if (existingCompanyCount > 0 && process.env.ALLOW_OPEN_REGISTRATION !== 'true') {
+          throw new Error('REGISTRATION_DISABLED');
+        }
+        if (existingCompanyCount > 0) {
+          company = await tx.company.findFirst({ orderBy: { createdAt: 'asc' } });
+        }
+      }
       let tenant;
       let branch;
       if (!company) {
@@ -89,7 +99,10 @@ export const register = async (req: Request, res: Response) => {
     const context = { tenantId: created.tenant.id, companyId: created.company.id, branchId: created.branch.id };
     setRefresh(res, await makeRefresh(req, created.user.id, context));
     return success(res, await makePayload(created.user, context), 'Account created successfully', 201);
-  } catch (e: any) { return handlePrismaError(res, e); }
+  } catch (e: any) {
+    if (e.message === 'REGISTRATION_DISABLED') return error(res, 'Open registration is disabled. Contact your administrator.', 403, undefined, 'REGISTRATION_DISABLED');
+    return handlePrismaError(res, e);
+  }
 };
 
 export const login = async (req: Request, res: Response) => {
