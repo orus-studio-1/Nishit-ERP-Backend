@@ -258,3 +258,77 @@ export const amendStockEntry = async (req: Request, res: Response) => {
     return success(res, amended, 'Stock entry amendment created', 201);
   } catch (err: any) { return error(res, err.message || 'Could not amend stock entry', err.message?.includes('not found') ? 404 : 400); }
 };
+
+export const bulkCreateStockEntries = async (req: Request, res: Response) => {
+  try {
+    const entries = req.body.entries || [];
+    if (!Array.isArray(entries) || !entries.length) {
+      return error(res, 'At least one stock entry is required', 400);
+    }
+
+    for (const e of entries) {
+      const { purpose, fromWarehouseId, toWarehouseId, items = [] } = e;
+      if (!purpose) return error(res, 'purpose is required for all entries', 400);
+      if (!items.length) return error(res, 'At least one stock entry item is required per entry', 400);
+      if (purpose === 'MATERIAL_TRANSFER' && (!fromWarehouseId || !toWarehouseId || fromWarehouseId === toWarehouseId)) return error(res, 'Material transfer requires different source and destination warehouses', 400);
+      for (const item of items) {
+        const quantity = new Prisma.Decimal(item.quantity || 0);
+        if (!item.productId || quantity.lte(0)) return error(res, 'Every stock entry line requires a product and positive quantity', 400);
+        const product = await prisma.product.findUnique({ where: { id: item.productId } });
+        if (!product) return error(res, 'Stock entry product not found', 404);
+        if (product.hasBatchNo && !item.batchId && !String(item.batchNo || '').trim()) return error(res, `Batch is required for ${product.sku}`, 400);
+        if (product.hasSerialNo && ((!item.serialNoId && !String(item.serialNo || '').trim()) || !quantity.eq(1))) return error(res, `Serialized item ${product.sku} requires one serial and quantity 1 per row`, 400);
+        if (purpose !== 'MATERIAL_TRANSFER' && !item.warehouseId && !fromWarehouseId && !toWarehouseId) return error(res, `Warehouse is required for ${product.sku}`, 400);
+      }
+    }
+
+    const createdEntries = await prisma.$transaction(async (tx) => {
+      const results = [];
+      for (const e of entries) {
+        const { purpose, postingDate, fromWarehouseId, toWarehouseId, remarks, items = [] } = e;
+        const resolvedItems = [];
+        for (const item of items) {
+          let batchId = item.batchId || undefined;
+          let serialNoId = item.serialNoId || undefined;
+          if (!batchId && String(item.batchNo || '').trim()) {
+            const warehouseId = item.warehouseId || toWarehouseId || fromWarehouseId;
+            if (!warehouseId) throw new Error('Warehouse is required to create a batch');
+            const product = await tx.product.findUnique({ where: { id: item.productId } });
+            const existingBatch = await tx.batch.findFirst({ where: { companyId: product?.companyId, productId: item.productId, warehouseId, batchNo: String(item.batchNo).trim() } });
+            const batch = existingBatch || await tx.batch.create({ data: { companyId: product?.companyId, productId: item.productId, warehouseId, batchNo: String(item.batchNo).trim(), quantity: 0 } });
+            batchId = batch.id;
+          }
+          if (!serialNoId && String(item.serialNo || '').trim()) {
+            const warehouseId = item.warehouseId || toWarehouseId || fromWarehouseId;
+            if (!warehouseId) throw new Error('Warehouse is required to create a serial number');
+            const product = await tx.product.findUnique({ where: { id: item.productId } });
+            const existingSerial = await tx.serialNumber.findFirst({ where: { companyId: product?.companyId, productId: item.productId, serialNo: String(item.serialNo).trim() } });
+            if (existingSerial) throw new Error(`Serial number ${item.serialNo} already exists`);
+            const serial = await tx.serialNumber.create({ data: { companyId: product?.companyId, productId: item.productId, warehouseId, serialNo: String(item.serialNo).trim(), batchId, status: 'AVAILABLE' } });
+            serialNoId = serial.id;
+          }
+          resolvedItems.push({ ...item, batchId, serialNoId });
+        }
+        const created = await tx.stockEntry.create({
+          data: {
+            entryNo: await nextStockEntryNo(tx),
+            purpose,
+            postingDate: postingDate ? new Date(postingDate) : new Date(),
+            fromWarehouseId: fromWarehouseId || undefined,
+            toWarehouseId: toWarehouseId || undefined,
+            remarks,
+            items: { create: itemData(resolvedItems) },
+          },
+          include,
+        });
+        results.push(created);
+      }
+      return results;
+    });
+
+    return success(res, { count: createdEntries.length, items: createdEntries }, 'Bulk stock entries created', 201);
+  } catch (err: any) {
+    if (err.message) return error(res, err.message, 400);
+    return handlePrismaError(res, err);
+  }
+};

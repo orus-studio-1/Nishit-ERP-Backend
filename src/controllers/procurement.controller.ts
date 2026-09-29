@@ -1,3 +1,4 @@
+import { TRADE_TYPES } from '../services/incentives/incentiveScheme.service';
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
@@ -284,7 +285,10 @@ export const createPurchaseReceipt = async (req: Request, res: Response) => {
       acceptedQty: items.reduce((s, i) => s.plus(i.acceptedQty || i.receivedQty || 0), new D(0)),
       rejectedQty: items.reduce((s, i) => s.plus(i.rejectedQty || 0), new D(0)), subtotal: totals.subtotal, items: { create: items },
     }, include: purchaseReceiptInclude }), 'Purchase receipt created', 201);
-  } catch (err: any) { return handlePrismaError(res, err); }
+  } catch (err: any) {
+    if (!err?.code) return error(res, err.message || 'Failed to create purchase receipt', 400);
+    return handlePrismaError(res, err);
+  }
 };
 export const createPurchaseReceiptFromPurchaseOrder = async (req: Request, res: Response) => {
   try { return success(res, await createPurchaseReceiptFromOrder(req.params.id, req.body), 'Purchase receipt created from PO', 201); }
@@ -358,6 +362,8 @@ export const createPurchaseInvoice = async (req: Request, res: Response) => {
     if ((settings as any).requirePurchaseReceiptForInvoice && !req.body.purchaseReceiptId) return error(res, 'Purchase Receipt is required before Purchase Invoice', 400);
     const items = purchaseInvoiceItems(req.body.items);
     if (!req.body.supplierId || !items.length) return error(res, 'Supplier and at least one invoice item are required', 400);
+    const tradeType = req.body.tradeType || undefined;
+    if (tradeType && !(TRADE_TYPES as readonly string[]).includes(tradeType)) return error(res, `tradeType must be one of: ${TRADE_TYPES.join(', ')}`, 400);
     const supplier = await prisma.supplier.findUnique({ where: { id: req.body.supplierId } });
     if (!supplier) return error(res, 'Supplier not found', 404);
     if (req.body.supplierInvoiceNo) {
@@ -377,7 +383,7 @@ export const createPurchaseInvoice = async (req: Request, res: Response) => {
       invoiceNo: await generatePurchaseInvoiceNo(), supplierId: req.body.supplierId,
       supplierInvoiceNo: req.body.supplierInvoiceNo || undefined,
       purchaseOrderId: req.body.purchaseOrderId || undefined, purchaseReceiptId: req.body.purchaseReceiptId || undefined,
-      date: invoiceDate, dueDate,
+      date: invoiceDate, dueDate, tradeType,
       subtotal: Number(totals.subtotal), taxAmount: Number(totals.taxAmount), shippingAmount: Number(totals.shippingAmount),
       discount: Number(req.body.discount || 0), total: Number(totals.total), baseTotal: totals.baseTotal,
       outstandingAmount: totals.total, currency: req.body.currency || 'INR', exchangeRate: req.body.exchangeRate || 1,

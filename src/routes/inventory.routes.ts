@@ -11,6 +11,7 @@ import {
   getReservedStockReport, getWarehouseValuationReport, getItemWiseSalesReport, getGrossProfitReport, getSlowMovingStockReport,
   createManualStockReservation, createManualSlowMovingStock,
   getProductAttributes, createProductAttribute, getUomConversions, createUomConversion, deleteUomConversion, getBatches, createBatch, getSerialNumbers, createSerialNumber, amendStockEntry,
+  bulkCreateStockMovements, bulkCreateStockEntries,
 } from '../controllers/inventory.controller';
 import {
   approveReconciliation, barcodeLookup, cancelReconciliation, createBatchGenealogy, createReconciliation,
@@ -34,8 +35,10 @@ router.route('/warehouses').get(getWarehouses).post(createWarehouse);
 router.route('/warehouses/:id').put(updateWarehouse).delete(deleteWarehouse);
 
 router.route('/stock-movements').get(getStockMovements).post(createStockMovement);
+router.post('/stock-movements/bulk', bulkCreateStockMovements);
 
 router.route('/stock-entries').get(getStockEntries).post(createStockEntry);
+router.post('/stock-entries/bulk', bulkCreateStockEntries);
 router.route('/stock-entries/:id').get(getStockEntry);
 router.patch('/stock-entries/:id/status', updateStockEntryStatus);
 router.post('/stock-entries/:id/amend', amendStockEntry);
