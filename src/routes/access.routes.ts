@@ -2,7 +2,6 @@ import { Router } from 'express';
 import {
   bootstrapAccess,
   createAccessRole,
-  getAccessAuditLogs,
   getAccessCatalog,
   getAccessRoles,
   getAccessSummary,
@@ -29,7 +28,5 @@ router.route('/users')
   .get(requirePermission('access', 'users', 'READ'), getAccessUsers);
 router.put('/users/:id/access', requirePermission('access', 'users', 'WRITE'), updateUserAccess);
 router.put('/users/:id/password', requirePermission('access', 'users', 'WRITE'), issueUserPassword);
-
-router.get('/audit', requirePermission('access', 'audit', 'READ'), getAccessAuditLogs);
 
 export default router;
