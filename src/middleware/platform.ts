@@ -81,6 +81,18 @@ export function optimisticConcurrency(req: Request, res: Response, next: NextFun
   next();
 }
 
+// Queues an audit event (entityType/entityId/action/before/after/diff/message/
+// statusBefore/statusAfter/companyId/userId) for the mutationAudit middleware below to write
+// when the response is sent, instead of a controller writing its own separate row. A single
+// request can legitimately touch more than one entity (e.g. accepting a quotation also creates
+// a sales order), so this queues rather than overwrites -- each call adds one row. This is the
+// *only* way business logic should record an audit event; nothing outside this file should call
+// prisma.platformAuditLog.create.
+export function setAuditContext(req: Request, patch: Record<string, any>) {
+  const events: Record<string, any>[] = (req as any).auditEvents || ((req as any).auditEvents = []);
+  events.push(patch);
+}
+
 export async function mutationAudit(req: AuthRequest, res: Response, next: NextFunction) {
   if (!mutationMethods.has(req.method)) return next();
   const pathParts = req.path.split('/').filter(Boolean);
@@ -103,24 +115,34 @@ export async function mutationAudit(req: AuthRequest, res: Response, next: NextF
   }
   const originalJson = res.json.bind(res);
   res.json = ((body: any) => {
-    if (req.user && res.statusCode >= 200 && res.statusCode < 400 && moduleName !== 'auth') {
+    const events: Record<string, any>[] = (req as any).auditEvents || [];
+    const hasAuditIntent = Boolean(req.user) || events.length > 0;
+    if (hasAuditIntent && res.statusCode >= 200 && res.statusCode < 400 && moduleName !== 'auth') {
       const responseData = body?.data;
-      const entityId = req.params?.id || pathEntityId || responseData?.id || responseData?.data?.id;
-      prisma.platformAuditLog.create({ data: {
-        tenantId: req.user.tenantId || undefined,
-        companyId: req.user.companyId,
-        branchId: req.user.branchId || undefined,
-        userId: req.user.id,
-        entityType: `${moduleName}:${resource}`.toUpperCase(),
-        entityId: entityId ? String(entityId) : undefined,
-        action: auditAction(req),
-        before: sanitizeAuditValue(beforeSnapshot),
-        diff: sanitizeAuditValue(req.body || {}),
-        after: sanitizeAuditValue(responseData),
-        ip: req.ip,
-        userAgent: req.get('user-agent'),
-        requestId: req.context?.requestId,
-      } }).catch(error => console.error('Unable to write audit log:', error));
+      // No controller queued an explicit event for this request -- fall back to the single
+      // automatic "record change" row derived from the route, same as before.
+      const rows = (events.length ? events : [{}]).map((context) => {
+        const entityId = context.entityId || req.params?.id || pathEntityId || responseData?.id || responseData?.data?.id;
+        return {
+          tenantId: context.tenantId ?? req.user?.tenantId ?? undefined,
+          companyId: context.companyId ?? req.user?.companyId,
+          branchId: context.branchId ?? req.user?.branchId ?? undefined,
+          userId: context.userId ?? req.user?.id,
+          entityType: context.entityType ? String(context.entityType) : `${moduleName}:${resource}`.toUpperCase(),
+          entityId: entityId ? String(entityId) : undefined,
+          action: context.action || auditAction(req),
+          statusBefore: context.statusBefore,
+          statusAfter: context.statusAfter,
+          message: context.message,
+          before: context.before !== undefined ? sanitizeAuditValue(context.before) : sanitizeAuditValue(beforeSnapshot),
+          diff: context.diff !== undefined ? sanitizeAuditValue(context.diff) : sanitizeAuditValue(req.body || {}),
+          after: context.after !== undefined ? sanitizeAuditValue(context.after) : sanitizeAuditValue(responseData),
+          ip: req.ip,
+          userAgent: req.get('user-agent'),
+          requestId: req.context?.requestId,
+        };
+      });
+      prisma.platformAuditLog.createMany({ data: rows }).catch(error => console.error('Unable to write audit log:', error));
     }
     return originalJson(body);
   }) as any;

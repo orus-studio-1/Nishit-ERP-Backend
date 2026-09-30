@@ -1,9 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { postStockLedger } from '../services/inventory/stockLedger.service';
 import { fulfillSalesOrderReservation } from '../services/inventory/reservation.service';
+import { setAuditContext } from '../middleware/platform';
 
 const D = Prisma.Decimal;
 
+// Does not write to the database itself -- it hands the business context (message,
+// statusBefore/After, entityType/Id, diff) to the mutationAudit middleware, which writes
+// the single audit row for this request when the response is sent. `tx` is accepted only
+// for call-site compatibility and is unused; every audit write goes through the middleware.
 export async function audit(tx: any, req: any, input: {
   entityType: any;
   entityId: string;
@@ -16,14 +21,12 @@ export async function audit(tx: any, req: any, input: {
   deliveryNoteId?: string;
   creditNoteId?: string;
 }) {
-  if (!tx.auditLog) return null;
-  return tx.auditLog.create({
-    data: {
-      actorId: req?.user?.id,
-      actorEmail: req?.user?.email,
-      actorRole: req?.user?.role,
-      ...input,
-    },
+  // invoiceId/deliveryNoteId/creditNoteId are dropped here -- every caller already
+  // passes the same value as entityId, so nothing is lost by not storing them again.
+  const { invoiceId, deliveryNoteId, creditNoteId, entityType, ...rest } = input;
+  setAuditContext(req, {
+    entityType: String(entityType),
+    ...rest,
   });
 }
 

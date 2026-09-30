@@ -4,9 +4,11 @@ import prisma from '../lib/prisma';
 import { success, paginated, error } from '../utils/response';
 import { handlePrismaError } from '../utils/prismaError';
 import { audit, postStockOut } from '../utils/erp';
+import { setAuditContext } from '../middleware/platform';
 import { serializeMoney } from '../utils/invoice';
 import { fulfillSalesOrderReservation } from '../services/inventory/reservation.service';
 import { refreshSalesOrderProgress } from '../services/sales/salesOrder.service';
+import { paginateQuery } from '../utils/pagination';
 
 async function nextDeliveryNo(tx: any) {
   let series = await tx.numberingSeries.findFirst({ where: { documentType: 'DELIVERY_NOTE', isActive: true, isDefault: true } });
@@ -63,17 +65,12 @@ function validateDeliveryItems(items: any[]) {
 
 export const getDeliveryNotes = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { status, customerId, salesOrderId } = req.query as any;
     const where: any = {};
     if (status) where.status = status;
     if (customerId) where.customerId = customerId;
     if (salesOrderId) where.salesOrderId = salesOrderId;
-    const [items, total] = await Promise.all([
-      prisma.deliveryNote.findMany({ where, include: deliveryInclude, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }),
-      prisma.deliveryNote.count({ where }),
-    ]);
+    const { items, total, page, limit } = await paginateQuery(prisma.deliveryNote, req, { where, include: deliveryInclude });
     return paginated(res, items.map(serializeDelivery), total, page, limit);
   } catch (err: any) {
     return handlePrismaError(res, err);
@@ -220,7 +217,7 @@ export const createAndDispatchFromSalesOrder = async (req: Request, res: Respons
       await refreshSalesOrderProgress(tx, order.id);
       await audit(tx, req, { entityType: 'DELIVERY_NOTE', entityId: created.id, deliveryNoteId: created.id, action: 'CREATE_AND_DISPATCH', statusAfter: 'SUBMITTED', message: `Created and dispatched ${created.deliveryNo} from ${order.orderNo}`, diff: { lines: lines.map(line => ({ salesOrderItemId: line.salesOrderItemId, warehouseId: line.warehouseId, quantity: line.quantity.toString() })) } });
       const user = (req as any).user || {};
-      await tx.platformAuditLog.create({ data: { tenantId: user.tenantId, companyId: order.companyId, userId: user.id, entityType: 'SHIPMENT', entityId: created.id, action: 'CREATE_AND_DISPATCH', after: JSON.parse(JSON.stringify(created)), diff: { salesOrderId: order.id, lines: lines.map(line => ({ salesOrderItemId: line.salesOrderItemId, warehouseId: line.warehouseId, quantity: line.quantity.toString() })) }, ip: req.ip, userAgent: req.get('user-agent') } });
+      setAuditContext(req, { tenantId: user.tenantId, companyId: order.companyId, userId: user.id, entityType: 'SHIPMENT', entityId: created.id, action: 'CREATE_AND_DISPATCH', after: JSON.parse(JSON.stringify(created)), diff: { salesOrderId: order.id, lines: lines.map(line => ({ salesOrderItemId: line.salesOrderItemId, warehouseId: line.warehouseId, quantity: line.quantity.toString() })) } });
       {
         const recipient = String(req.body.recipientEmail || order.customer.email || '').trim();
         if (recipient) {
@@ -314,7 +311,7 @@ export const updateShipmentStatus = async (req: Request, res: Response) => {
       }
       if (shipmentStatus === 'FAILED' && !String(req.body.failedDeliveryReason || '').trim()) throw new Error('Failed-delivery reason is required');
       const updated = await tx.deliveryNote.update({ where: { id: existing.id }, data: { shipmentStatus, transporter: req.body.transporter ?? existing.transporter, trackingNo: req.body.trackingNo ?? existing.trackingNo, expectedDeliveryAt: req.body.expectedDeliveryAt ? new Date(req.body.expectedDeliveryAt) : existing.expectedDeliveryAt, ...(shipmentStatus === 'DISPATCHED' ? { dispatchedAt: existing.dispatchedAt || new Date() } : {}), ...(shipmentStatus === 'FAILED' ? { failedDeliveryReason: String(req.body.failedDeliveryReason).trim() } : {}), ...(shipmentStatus === 'DELIVERED' ? { deliveredAt: req.body.deliveredAt ? new Date(req.body.deliveredAt) : new Date(), proofOfDelivery: req.body.proofOfDelivery, failedDeliveryReason: null } : {}) }, include: deliveryInclude });
-      const user = (req as any).user || {}; await tx.platformAuditLog.create({ data: { tenantId: user.tenantId, companyId: user.companyId, userId: user.id, entityType: 'SHIPMENT', entityId: existing.id, action: `MARK_${shipmentStatus}`, before: JSON.parse(JSON.stringify(existing)), after: JSON.parse(JSON.stringify(updated)), ip: req.ip, userAgent: req.get('user-agent') } });
+      const user = (req as any).user || {}; setAuditContext(req, { tenantId: user.tenantId, companyId: user.companyId, userId: user.id, entityType: 'SHIPMENT', entityId: existing.id, action: `MARK_${shipmentStatus}`, before: JSON.parse(JSON.stringify(existing)), after: JSON.parse(JSON.stringify(updated)) });
       if (shipmentStatus === 'DELIVERED' && existing.salesOrderId) {
         const order = await tx.salesOrder.findUnique({ where: { id: existing.salesOrderId }, include: { customer: true } });
         if (order) { const recipient = String(req.body.recipientEmail || order.customer.email || '').trim(); if (recipient) { const communication = await tx.salesCommunication.create({ data: { companyId: order.companyId, entityType: 'ORDER', entityId: order.id, channel: 'EMAIL', direction: 'OUTBOUND', kind: 'DELIVERY_CONFIRMATION', recipient, subject: `Delivery confirmed: ${existing.deliveryNo}`, message: `Delivery ${existing.deliveryNo} for order ${order.orderNo} was confirmed on ${updated.deliveredAt?.toLocaleString()}. Proof of delivery: ${updated.proofOfDelivery || 'Recorded in ERP'}.`, status: 'QUEUED', createdById: user.id } }); await tx.backgroundJob.create({ data: { tenantId: user.tenantId, type: 'SALES_COMMUNICATION_SEND', payload: { communicationId: communication.id } } }); } }

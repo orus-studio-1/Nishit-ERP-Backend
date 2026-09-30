@@ -5009,24 +5009,31 @@ model DocumentLifecycle {
 }
 
 model PlatformAuditLog {
-  id         String   @id @default(uuid(7)) @db.Uuid
-  tenantId   String?  @db.Uuid
-  companyId  String?
-  branchId   String?  @db.Uuid
-  userId     String?
-  entityType String
-  entityId   String?
-  action     String
-  before     Json?
-  after      Json?
-  diff       Json?
-  ip         String?
-  userAgent  String?
-  requestId  String?
-  createdAt  DateTime @default(now())
+  id           String   @id @default(uuid(7)) @db.Uuid
+  tenantId     String?  @db.Uuid
+  companyId    String?
+  branchId     String?  @db.Uuid
+  userId       String?
+  entityType   String
+  entityId     String?
+  action       String
+  statusBefore String?
+  statusAfter  String?
+  targetUserId String?
+  targetRoleId String?
+  message      String?
+  before       Json?
+  after        Json?
+  diff         Json?
+  ip           String?
+  userAgent    String?
+  requestId    String?
+  createdAt    DateTime @default(now())
 
   @@index([tenantId, createdAt])
   @@index([tenantId, entityType, entityId, createdAt])
+  @@index([targetUserId, createdAt])
+  @@index([targetRoleId, createdAt])
 }
 
 model Attachment {
