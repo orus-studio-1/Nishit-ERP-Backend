@@ -5,11 +5,10 @@ import { handlePrismaError } from '../../utils/prismaError';
 import { pickDefined } from '../../utils/payload';
 import { AuthRequest } from '../../middleware/auth';
 import { ensureOrganization, logCrmActivity } from './shared';
+import { respondPaginated } from '../../utils/pagination';
 
 export const getContacts = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { search } = req.query as any;
     const where: any = { isActive: true };
     if (search) where.OR = [
@@ -19,11 +18,7 @@ export const getContacts = async (req: Request, res: Response) => {
       { email: { contains: search, mode: 'insensitive' } },
     ];
 
-    const [items, total] = await Promise.all([
-      prisma.contact.findMany({ where, include: { organization: true, lead: true }, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }),
-      prisma.contact.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.contact, req, { where, include: { organization: true, lead: true }, orderBy: { createdAt: 'desc' } });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

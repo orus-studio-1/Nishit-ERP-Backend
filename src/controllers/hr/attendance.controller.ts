@@ -3,6 +3,7 @@ import prisma from '../../lib/prisma';
 import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { companyEmployeeWhere, getCompanyEmployee } from './shared';
+import { respondPaginated } from '../../utils/pagination';
 
 function attendanceTime(date: string, value?: string) {
   if (!value) return undefined;
@@ -13,8 +14,6 @@ function attendanceTime(date: string, value?: string) {
 
 export const getAttendance = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 30;
     const { employeeId, date, month, year } = req.query as any;
     const companyId = (req as any).user?.companyId;
     const where: any = { employee: companyEmployeeWhere(companyId) };
@@ -26,17 +25,12 @@ export const getAttendance = async (req: Request, res: Response) => {
       where.date = { gte: start, lt: end };
     }
 
-    const [items, total] = await Promise.all([
-      prisma.attendance.findMany({
-        where,
-        include: { employee: { include: { user: { select: { firstName: true, lastName: true } } } } },
-        orderBy: { date: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.attendance.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.attendance, req, {
+      where,
+      include: { employee: { include: { user: { select: { firstName: true, lastName: true } } } } },
+      orderBy: { date: 'desc' },
+      defaultLimit: 30,
+    });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

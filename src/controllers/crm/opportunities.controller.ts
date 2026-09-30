@@ -7,28 +7,17 @@ import { calculateOpportunityItems, logCrmActivity, opportunityInclude } from '.
 import { generateCustomerNo, generateOrderNo, generateQuotationNo } from '../../utils/generate';
 import { Prisma } from '@prisma/client';
 import { crmScopeWhere } from './scope';
+import { respondPaginated } from '../../utils/pagination';
 
 export const getOpportunities = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { stage, search, view } = req.query as any;
     const where: any = await crmScopeWhere(req as AuthRequest, 'OPPORTUNITY');
     if (stage) where.stage = stage;
     if (search) where.title = { contains: search, mode: 'insensitive' };
     if (view === 'open') where.stage = { notIn: ['CLOSED_WON', 'CLOSED_LOST'] };
 
-    const [items, total] = await Promise.all([
-      prisma.opportunity.findMany({
-        where,
-        include: opportunityInclude,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.opportunity.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.opportunity, req, { where, include: opportunityInclude, orderBy: { createdAt: 'desc' } });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

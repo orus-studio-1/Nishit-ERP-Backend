@@ -4,6 +4,7 @@ import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { apiStatusToWhere, invoiceInclude, invoiceResponse } from './shared';
 import { AuthRequest } from '../../middleware/auth';
+import { paginateQuery } from '../../utils/pagination';
 
 function userNameSearch(value: string) {
   return {
@@ -17,8 +18,6 @@ function userNameSearch(value: string) {
 
 export const getInvoices = async (req: AuthRequest, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const {
       status,
       customerId,
@@ -79,17 +78,7 @@ export const getInvoices = async (req: AuthRequest, res: Response) => {
       ];
     }
 
-    const [items, total] = await Promise.all([
-      prisma.salesInvoice.findMany({
-        where,
-        include: invoiceInclude,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.salesInvoice.count({ where }),
-    ]);
-
+    const { items, total, page, limit } = await paginateQuery(prisma.salesInvoice, req, { where, include: invoiceInclude });
     return paginated(res, items.map(invoiceResponse), total, page, limit);
   } catch (err: any) {
     if (err.message) return error(res, err.message, err.message.includes('not found') ? 404 : 400);

@@ -4,6 +4,7 @@ import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { AuthRequest } from '../../middleware/auth';
 import { crmScopeWhere } from './scope';
+import { respondPaginated } from '../../utils/pagination';
 
 const activityInclude = {
   user: { select: { id: true, firstName: true, lastName: true, email: true } },
@@ -60,8 +61,6 @@ async function touchLeadAfterActivity(tx: any, activity: any) {
 
 export const getActivities = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { leadId, contactId, opportunityId, organizationId, type, status, fromDate, toDate: untilDate, q } = req.query as any;
     const where: any = await crmScopeWhere(req as AuthRequest, 'ACTIVITY');
     if (leadId) where.leadId = leadId;
@@ -73,17 +72,7 @@ export const getActivities = async (req: Request, res: Response) => {
     if (fromDate || untilDate) where.createdAt = { ...(fromDate ? { gte: new Date(fromDate) } : {}), ...(untilDate ? { lte: new Date(untilDate) } : {}) };
     if (q) where.OR = [{ subject: { contains: q, mode: 'insensitive' } }, { description: { contains: q, mode: 'insensitive' } }];
 
-    const [items, total] = await Promise.all([
-      prisma.activity.findMany({
-        where,
-        include: activityInclude,
-        orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.activity.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.activity, req, { where, include: activityInclude, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

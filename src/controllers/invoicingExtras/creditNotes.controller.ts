@@ -6,28 +6,18 @@ import { handlePrismaError } from '../../utils/prismaError';
 import { calculateInvoiceTotals } from '../../utils/invoice';
 import { audit, recalculateInvoiceAllocations } from '../../utils/erp';
 import { nextNo, postCreditNoteLedger, serializeCreditNote } from './shared';
+import { paginateQuery } from '../../utils/pagination';
 
 const D = Prisma.Decimal;
 
 export const getCreditNotes = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { status, customerId, originalInvoiceId } = req.query as any;
     const where: any = {};
     if (status) where.status = status;
     if (customerId) where.customerId = customerId;
     if (originalInvoiceId) where.originalInvoiceId = originalInvoiceId;
-    const [items, total] = await Promise.all([
-      prisma.creditNote.findMany({
-        where,
-        include: { customer: { select: { name: true } }, originalInvoice: { select: { invoiceNo: true } }, items: true },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.creditNote.count({ where }),
-    ]);
+    const { items, total, page, limit } = await paginateQuery(prisma.creditNote, req, { where, include: { customer: { select: { name: true } }, originalInvoice: { select: { invoiceNo: true } }, items: true } });
     return paginated(res, items.map(serializeCreditNote), total, page, limit);
   } catch (err: any) {
     return handlePrismaError(res, err);

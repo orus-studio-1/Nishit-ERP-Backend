@@ -3,13 +3,12 @@ import prisma from '../../lib/prisma';
 import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { pickDefined } from '../../utils/payload';
+import { respondPaginated } from '../../utils/pagination';
 
 const productFields = ['sku', 'name', 'description', 'categoryId', 'unitId', 'type', 'supplyPolicy', 'costPrice', 'salePrice', 'taxRate', 'minStockLevel', 'maxStockLevel', 'valuationMethod', 'maintainStock', 'allowNegativeStock', 'hasBatchNo', 'hasSerialNo', 'reorderLevel', 'reorderQty', 'brand', 'manufacturer', 'isActive', 'image', 'barcode', 'weight', 'hsnCode', 'taxCode', 'defaultTaxTemplateId', 'defaultWarehouseId', 'isVariant', 'variantOfId', 'itemNature', 'shelfLifeDays', 'receiptInspectionRequired', 'inProcessInspectionRequired', 'finalInspectionRequired', 'safetyStock', 'leadTimeDays', 'minimumOrderQty', 'orderMultiple', 'backflush', 'drawingReference', 'revisionReference', 'batchAllocationStrategy', 'inventoryAccountId', 'cogsAccountId', 'stockAdjustmentAccountId'] as const;
 
 export const getProducts = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { categoryId, type, search, isActive } = req.query as any;
     const where: any = {};
     if (categoryId) where.categoryId = categoryId;
@@ -20,17 +19,7 @@ export const getProducts = async (req: Request, res: Response) => {
       { sku: { contains: search, mode: 'insensitive' } },
     ];
 
-    const [items, total] = await Promise.all([
-      prisma.product.findMany({
-        where,
-        include: { category: true, unit: true, stockLevels: { include: { warehouse: true } } },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.product.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.product, req, { where, include: { category: true, unit: true, stockLevels: { include: { warehouse: true } } } });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

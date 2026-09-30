@@ -4,6 +4,7 @@ import prisma from '../../lib/prisma';
 import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { pickDefined } from '../../utils/payload';
+import { respondPaginated } from '../../utils/pagination';
 
 export const getPriceLists = async (_req: Request, res: Response) => {
   try {
@@ -25,18 +26,12 @@ export const createPriceList = async (req: Request, res: Response) => {
 
 export const getItemPrices = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { productId, priceListId, customerId } = req.query as any;
     const where: any = {};
     if (productId) where.productId = productId;
     if (priceListId) where.priceListId = priceListId;
     if (customerId) where.customerId = customerId;
-    const [items, total] = await Promise.all([
-      prisma.itemPrice.findMany({ where, include: { product: true, priceList: true }, orderBy: { updatedAt: 'desc' }, skip: (page - 1) * limit, take: limit }),
-      prisma.itemPrice.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.itemPrice, req, { where, include: { product: true, priceList: true }, orderBy: { updatedAt: 'desc' } });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

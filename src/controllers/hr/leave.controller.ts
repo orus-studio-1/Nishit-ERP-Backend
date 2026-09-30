@@ -3,6 +3,7 @@ import prisma from '../../lib/prisma';
 import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { dayStart, daysBetweenInclusive, getEmployeeForUser } from './shared';
+import { respondPaginated } from '../../utils/pagination';
 
 export const getLeaveTypes = async (req: Request, res: Response) => {
   try {
@@ -58,8 +59,6 @@ export const getLeaveBalances = async (req: Request, res: Response) => {
 // ---- LEAVE REQUESTS ----
 export const getLeaveRequests = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { employeeId, status } = req.query as any;
     const where: any = { employee: { user: { companyId: (req as any).user?.companyId || '__missing_company__' } } };
     if (employeeId) where.employeeId = employeeId;
@@ -70,20 +69,13 @@ export const getLeaveRequests = async (req: Request, res: Response) => {
       where.employeeId = employee.id;
     }
 
-    const [items, total] = await Promise.all([
-      prisma.leaveRequest.findMany({
-        where,
-        include: {
-          employee: { include: { user: { select: { firstName: true, lastName: true } } } },
-          leaveType: true,
-        },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.leaveRequest.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.leaveRequest, req, {
+      where,
+      include: {
+        employee: { include: { user: { select: { firstName: true, lastName: true } } } },
+        leaveType: true,
+      },
+    });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

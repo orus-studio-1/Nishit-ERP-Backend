@@ -4,6 +4,7 @@ import prisma from '../../lib/prisma';
 import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { postStockLedger, postStockTransfer } from '../../services/inventory/stockLedger.service';
+import { respondPaginated } from '../../utils/pagination';
 
 const include = {
   fromWarehouse: true,
@@ -138,17 +139,11 @@ async function reverseStockEntry(tx: any, entry: any) {
 
 export const getStockEntries = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { status, purpose } = req.query as any;
     const where: any = {};
     if (status) where.status = status;
     if (purpose) where.purpose = purpose;
-    const [items, total] = await Promise.all([
-      prisma.stockEntry.findMany({ where, include, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }),
-      prisma.stockEntry.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.stockEntry, req, { where, include });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }
