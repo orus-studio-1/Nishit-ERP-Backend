@@ -84,6 +84,33 @@ export const createPaymentTerms = async (req: Request, res: Response) => {
   } catch (err: any) { return handlePrismaError(res, err); }
 };
 
+export const updatePaymentTerms = async (req: Request, res: Response) => {
+  try {
+    const terms = (req.body.terms || []).filter((term: any) => term.label && Number(term.percentage) > 0).map((term: any, index: number) => ({ label: term.label, percentage: Number(term.percentage), dueAfterDays: Number(term.dueAfterDays || 0), rowOrder: index }));
+    if (!req.body.name || !terms.length) return error(res, 'Template name and at least one payment term are required', 400);
+    const total = terms.reduce((sum: number, t: any) => sum + t.percentage, 0);
+    if (Math.abs(total - 100) > 0.001) return error(res, 'Payment term percentages must total 100', 400);
+    await (prisma as any).paymentTerm.deleteMany({ where: { templateId: req.params.id } });
+    const updated = await (prisma as any).paymentTermsTemplate.update({
+      where: { id: req.params.id },
+      data: { name: String(req.body.name).trim(), description: req.body.description || undefined, isActive: req.body.isActive !== false, terms: { create: terms } },
+      include: { terms: { orderBy: { rowOrder: 'asc' } } },
+    });
+    return success(res, updated, 'Payment terms updated');
+  } catch (err: any) { return handlePrismaError(res, err); }
+};
+
+export const deletePaymentTerms = async (req: Request, res: Response) => {
+  try {
+    await (prisma as any).paymentTerm.deleteMany({ where: { templateId: req.params.id } });
+    await (prisma as any).paymentTermsTemplate.delete({ where: { id: req.params.id } });
+    return success(res, null, 'Payment terms deleted');
+  } catch (err: any) { return handlePrismaError(res, err); }
+};
+
+
+
+
 export const getSupplierItems = async (req: Request, res: Response) => list(res, 'supplierItem', req, req.query.supplierId ? { supplierId: req.query.supplierId } : {}, { supplier: true, product: true });
 
 export const createSupplierItem = async (req: Request, res: Response) => {
@@ -193,10 +220,41 @@ export const createPurchaseOrderFromSupplierQuotation = async (req: Request, res
     const sq = await (prisma as any).supplierQuotation.findUnique({ where: { id: req.params.id }, include: { items: true } });
     if (!sq) return error(res, 'Supplier quotation not found', 404);
     const deliveryDates = sq.items.map((item: any) => item.deliveryDate).filter(Boolean);
-    req.body = { supplierId: sq.supplierId, rfqId: sq.rfqId, supplierQuotationId: sq.id, date: new Date(), expectedDate: deliveryDates.length ? new Date(Math.max(...deliveryDates.map((date: Date) => date.getTime()))) : undefined, currency: sq.currency, exchangeRate: sq.exchangeRate, discount: sq.discount, shippingAmount: sq.shippingAmount, terms: sq.terms, notes: req.body.notes, vendorDocumentDetails: sq.vendorDocumentDetails, items: sq.items.map((item: any) => ({ productId: item.productId, quantity: Number(item.quantity), unitPrice: Number(item.rate), taxRate: Number(item.taxRate), discount: Number(item.discount), uom: item.uom, stockUom: item.stockUom, conversionFactor: item.conversionFactor, supplierItemCode: item.supplierItemCode, total: Number(item.amount), categoryCode: item.categoryCode, hsnCode: item.hsnCode, make: item.make, quantityTolerance: item.quantityTolerance, expectedDate: item.deliveryDate })) };
+    req.body = {
+      supplierId: sq.supplierId,
+      rfqId: sq.rfqId,
+      supplierQuotationId: sq.id,
+      date: new Date(),
+      expectedDate: deliveryDates.length ? new Date(Math.max(...deliveryDates.map((date: Date) => date.getTime()))) : undefined,
+      currency: sq.currency || 'INR',
+      exchangeRate: sq.exchangeRate || 1,
+      discount: sq.discount || 0,
+      shippingAmount: sq.shippingAmount || 0,
+      terms: sq.terms || undefined,
+      notes: sq.notes || undefined,
+      vendorDocumentDetails: sq.vendorDocumentDetails || {},
+      items: sq.items.map((item: any) => ({
+        productId: item.productId,
+        quantity: Number(item.quantity),
+        unitPrice: Number(item.rate),
+        taxRate: Number(item.taxRate || 0),
+        discount: Number(item.discount || 0),
+        uom: item.uom,
+        stockUom: item.stockUom,
+        conversionFactor: item.conversionFactor,
+        supplierItemCode: item.supplierItemCode,
+        total: Number(item.amount || 0),
+        categoryCode: item.categoryCode,
+        hsnCode: item.hsnCode,
+        make: item.make,
+        quantityTolerance: item.quantityTolerance,
+        expectedDate: item.deliveryDate,
+      })),
+    };
     return createPurchaseOrder(req, res);
   } catch (err: any) { return handlePrismaError(res, err); }
 };
+
 
 export const getBlanketPurchaseOrders = async (req: Request, res: Response) => list(res, 'blanketPurchaseOrder', req, {}, { supplier: true, items: { include: { product: true } }, purchaseOrders: true });
 
@@ -213,6 +271,35 @@ export const createBlanketPurchaseOrder = async (req: Request, res: Response) =>
   }
   catch (err: any) { return handlePrismaError(res, err); }
 };
+
+export const getBlanketPurchaseOrderById = async (req: Request, res: Response) => {
+  try {
+    const bpo = await (prisma as any).blanketPurchaseOrder.findUnique({
+      where: { id: req.params.id },
+      include: { supplier: true, items: { include: { product: true } }, purchaseOrders: { include: { supplier: true }, orderBy: { createdAt: 'desc' } } },
+    });
+    if (!bpo) return error(res, 'Blanket purchase order not found', 404);
+    return success(res, bpo);
+  } catch (err: any) { return handlePrismaError(res, err); }
+};
+
+export const updateBlanketPurchaseOrderStatus = async (req: Request, res: Response) => {
+  try {
+    const bpo = await (prisma as any).blanketPurchaseOrder.findUnique({ where: { id: req.params.id } });
+    if (!bpo) return error(res, 'Blanket purchase order not found', 404);
+    const { status } = req.body;
+    if (!['SUBMITTED', 'CANCELLED'].includes(status)) return error(res, 'Invalid status. Allowed: SUBMITTED, CANCELLED', 400);
+    if (bpo.status === 'CANCELLED') return error(res, 'Cannot update a cancelled blanket order', 400);
+    if (bpo.status === 'SUBMITTED' && status === 'SUBMITTED') return error(res, 'Already submitted', 400);
+    const updated = await (prisma as any).blanketPurchaseOrder.update({
+      where: { id: req.params.id }, data: { status },
+      include: { supplier: true, items: { include: { product: true } }, purchaseOrders: { include: { supplier: true } } },
+    });
+    return success(res, updated, `Blanket order ${status === 'SUBMITTED' ? 'submitted' : 'cancelled'} successfully`);
+  } catch (err: any) { return handlePrismaError(res, err); }
+};
+
+
 
 export const getPurchaseOrders = async (req: Request, res: Response) => {
   const where: any = {};
@@ -302,7 +389,14 @@ export const updatePurchaseReceiptStatus = async (req: Request, res: Response) =
   } catch (err: any) { return error(res, err.message || 'Failed', 400); }
 };
 
-export const getQualityInspections = async (req: Request, res: Response) => list(res, 'qualityInspection', req, req.query.status ? { status: req.query.status } : {}, { purchaseReceipt: true, product: true });
+export const getQualityInspections = async (req: Request, res: Response) => list(res, 'qualityInspection', req, req.query.status ? { status: req.query.status } : {}, { purchaseReceipt: { include: { purchaseOrder: true } }, product: true });
+export const getQualityInspectionById = async (req: Request, res: Response) => {
+  try {
+    const row = await (prisma as any).qualityInspection.findUnique({ where: { id: req.params.id }, include: { purchaseReceipt: { include: { purchaseOrder: { include: { supplier: true } } } }, product: true } });
+    if (!row) return error(res, 'Quality inspection not found', 404);
+    return success(res, row);
+  } catch (err: any) { return handlePrismaError(res, err); }
+};
 export const createQualityInspection = async (req: Request, res: Response) => {
   try {
     if (!req.body.purchaseReceiptId && !req.body.productId) return error(res, 'Purchase receipt or product is required', 400);
@@ -318,6 +412,24 @@ export const createQualityInspection = async (req: Request, res: Response) => {
   }
   catch (err: any) { return handlePrismaError(res, err); }
 };
+export const updateQualityInspection = async (req: Request, res: Response) => {
+  try {
+    const row = await (prisma as any).qualityInspection.findUnique({ where: { id: req.params.id } });
+    if (!row) return error(res, 'Quality inspection not found', 404);
+    const data: any = {};
+    if (req.body.status) data.status = req.body.status;
+    if (req.body.remarks !== undefined) data.remarks = req.body.remarks;
+    if (req.body.deviationReason !== undefined) data.deviationReason = req.body.deviationReason;
+    if (req.body.certificateNo !== undefined) data.certificateNo = req.body.certificateNo;
+    if (req.body.acceptedQty !== undefined) data.acceptedQty = Number(req.body.acceptedQty);
+    if (req.body.rejectedQty !== undefined) data.rejectedQty = Number(req.body.rejectedQty);
+    if (data.status) data.approvedById = (req as any).user?.id;
+    const updated = await (prisma as any).qualityInspection.update({ where: { id: req.params.id }, data, include: { purchaseReceipt: { include: { purchaseOrder: { include: { supplier: true } } } }, product: true } });
+    return success(res, updated, 'Quality inspection updated');
+  } catch (err: any) { return handlePrismaError(res, err); }
+};
+
+
 
 export const getLandedCostVouchers = async (req: Request, res: Response) => list(res, 'landedCostVoucher', req, {}, { purchaseReceipt: true, charges: true, allocations: true });
 export const createLandedCostVoucher = async (req: Request, res: Response) => {

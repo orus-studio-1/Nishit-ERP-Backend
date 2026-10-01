@@ -170,7 +170,7 @@ export async function createTransferOrder(req: Request, res: Response) {
     }
     const crossPlant = Boolean(source.plantId && destination.plantId && source.plantId !== destination.plantId);
     if (crossPlant && !req.body.transitWarehouseId) return error(res, 'Across-plant transfer requires a goods-in-transit warehouse', 400);
-    const row = await prisma.stockTransferOrder.create({ data: { transferNo: number('TO'), companyId: companyId(req), sourceWarehouseId, destinationWarehouseId, transitWarehouseId: req.body.transitWarehouseId, crossPlant, transporter: req.body.transporter, vehicleNo: req.body.vehicleNo, trackingReference: req.body.trackingReference, notes: req.body.notes, items: { create: items.map((i: any) => ({ productId: i.productId, quantity: new D(i.quantity), valuationRate: new D(i.valuationRate || 0), batchId: i.batchId, serialNoId: i.serialNoId })) } }, include: transferInclude });
+    const row = await prisma.stockTransferOrder.create({ data: { transferNo: number('TO'), companyId: companyId(req), sourceWarehouseId, destinationWarehouseId, transitWarehouseId: req.body.transitWarehouseId || undefined, crossPlant, transporter: req.body.transporter || undefined, vehicleNo: req.body.vehicleNo || undefined, trackingReference: req.body.trackingReference || undefined, notes: req.body.notes || undefined, items: { create: items.map((i: any) => ({ productId: i.productId, quantity: new D(i.quantity), valuationRate: new D(i.valuationRate || 0), batchId: i.batchId || undefined, serialNoId: i.serialNoId || undefined })) } }, include: transferInclude });
     return success(res, row, 'Transfer order created', 201);
   } catch (e: any) { return error(res, e.message || 'Could not create transfer', 400); }
 }

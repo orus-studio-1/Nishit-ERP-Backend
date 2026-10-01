@@ -3,16 +3,21 @@ import {
   addSupplierCommunication,
   compareSupplierQuotations,
   createBlanketPurchaseOrder,
+  getBlanketPurchaseOrderById,
+  updateBlanketPurchaseOrderStatus,
   createLandedCostVoucher,
   createMaterialRequest,
   createMaterialRequestsFromReorder,
   createPaymentTerms,
+  updatePaymentTerms,
+  deletePaymentTerms,
   createPurchaseInvoice,
   createPurchaseOrder,
   createPurchaseOrderFromSupplierQuotation,
   createPurchaseReceipt,
   createPurchaseReceiptFromPurchaseOrder,
   createQualityInspection,
+  updateQualityInspection,
   createRfq,
   createRfqFromMaterialRequest,
   createSupplierItem,
@@ -21,6 +26,7 @@ import {
   deletePurchaseInvoice,
   deletePurchaseOrder,
   getBlanketPurchaseOrders,
+  getBlanketPurchaseOrderById,
   getBuyingSettings,
   getLandedCostVouchers,
   getMaterialRequests,
@@ -32,6 +38,7 @@ import {
   getPurchaseOrders,
   getPurchaseReceipts,
   getQualityInspections,
+  getQualityInspectionById,
   getRfqs,
   getSupplierItems,
   getSupplierCommunications,
@@ -63,6 +70,8 @@ import {
   purchaseOrderOperation,
   reviseSupplierQuotation,
   rfqOperation,
+  inviteSupplierToRfq,
+  removeRfqSupplier,
   runMatch,
   selectRfqVendors,
   submitPurchaseReturn,
@@ -83,6 +92,7 @@ router.get('/tracker', getProcurementTracker);
 
 router.route('/settings').get(getBuyingSettings).put(updateBuyingSettings).patch(updateBuyingSettings);
 router.route('/payment-terms').get(getPaymentTerms).post(createPaymentTerms);
+router.route('/payment-terms/:id').put(updatePaymentTerms).delete(deletePaymentTerms);
 router.route('/supplier-items').get(getSupplierItems).post(createSupplierItem);
 router.route('/communications').get(getSupplierCommunications).post(addSupplierCommunication);
 router.get('/suppliers/:supplierId/communication-workspace', getSupplierCommunicationWorkspace);
@@ -104,6 +114,8 @@ router.get('/rfqs/:rfqId/compare', compareSupplierQuotations);
 router.get('/rfqs/:id/comparison', comparison);
 router.post('/rfqs/:id/selections', selectRfqVendors);
 router.post('/rfqs/:id/generate-purchase-orders', generateSelectedPurchaseOrders);
+router.post('/rfqs/:id/invite-supplier', inviteSupplierToRfq);
+router.delete('/rfqs/:id/suppliers/:supplierId', removeRfqSupplier);
 router.post('/rfqs/:id/:operation', rfqOperation);
 
 router.route('/supplier-quotations').get(getSupplierQuotations).post(createSupplierQuotation);
@@ -112,6 +124,8 @@ router.post('/supplier-quotations/:id/purchase-order', createPurchaseOrderFromSu
 router.post('/supplier-quotations/:id/revise', reviseSupplierQuotation);
 
 router.route('/blanket-purchase-orders').get(getBlanketPurchaseOrders).post(createBlanketPurchaseOrder);
+router.get('/blanket-purchase-orders/:id', getBlanketPurchaseOrderById);
+router.patch('/blanket-purchase-orders/:id/status', updateBlanketPurchaseOrderStatus);
 
 router.route('/purchase-orders').get(getPurchaseOrders).post(createPurchaseOrder);
 router.get('/purchase-orders/:id/workspace', getPurchaseOrderWorkspace);
@@ -133,6 +147,7 @@ router.route('/purchase-receipts').get(getPurchaseReceipts).post(createPurchaseR
 router.patch('/purchase-receipts/:id/status', updatePurchaseReceiptStatus);
 
 router.route('/quality-inspections').get(getQualityInspections).post(createQualityInspection);
+router.route('/quality-inspections/:id').get(getQualityInspectionById).patch(updateQualityInspection);
 router.post('/quality-inspections/:id/complete', completeInspection);
 router.post('/purchase-returns', createPurchaseReturn);
 router.post('/purchase-returns/:id/submit', submitPurchaseReturn);

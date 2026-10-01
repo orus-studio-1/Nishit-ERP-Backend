@@ -67,6 +67,55 @@ export async function rfqOperation(req: Request, res: Response) {
   } catch (e: any) { return error(res, e.message || 'RFQ operation failed', 400); }
 }
 
+export async function inviteSupplierToRfq(req: Request, res: Response) {
+  try {
+    const { supplierId, email } = req.body;
+    if (!supplierId) return error(res, 'Supplier is required', 400);
+    const row = await prisma.$transaction(async tx => {
+      const rfq = await tx.requestForQuotation.findUnique({ where: { id: req.params.id } });
+      if (!rfq) throw new Error('RFQ not found');
+      if (rfq.status === 'CANCELLED' || rfq.status === 'CLOSED') throw new Error('Cannot invite suppliers to a cancelled or closed RFQ');
+      const supplier = await tx.supplier.findUnique({ where: { id: supplierId } });
+      if (!supplier) throw new Error('Supplier not found');
+      const existing = await tx.requestForQuotationSupplier.findFirst({ where: { rfqId: rfq.id, supplierId } });
+      if (existing) throw new Error('This supplier is already invited to the RFQ');
+      const recipient = email || supplier.email;
+      // If RFQ is already SENT, immediately queue email and mark as SENT
+      const alreadySent = rfq.status === 'SENT';
+      const token = alreadySent ? randomBytes(24).toString('hex') : undefined;
+      const invited = await tx.requestForQuotationSupplier.create({
+        data: {
+          rfqId: rfq.id,
+          supplierId,
+          email: recipient || undefined,
+          ...(alreadySent ? { status: 'SENT', sentAt: new Date(), deliveredAt: new Date(), portalToken: token } : {}),
+        },
+        include: { supplier: true },
+      });
+      if (alreadySent && recipient) {
+        await tx.backgroundJob.create({ data: { tenantId: tenantId(req), type: 'PROCUREMENT_RFQ_EMAIL', payload: { rfqId: rfq.id, supplierId, to: recipient, token } } });
+      }
+      await audit(tx, req, { rfqId: rfq.id, entityType: 'RFQ', entityId: rfq.id, action: 'SUPPLIER_INVITED', after: { supplierId, supplierName: supplier.name, emailQueued: alreadySent } });
+      return invited;
+    });
+    return success(res, row, 'Supplier invited to RFQ', 201);
+  } catch (e: any) { return error(res, e.message || 'Failed to invite supplier', 400); }
+}
+
+
+export async function removeRfqSupplier(req: Request, res: Response) {
+  try {
+    const row = await prisma.$transaction(async tx => {
+      const supplierRow = await tx.requestForQuotationSupplier.findUnique({ where: { id: req.params.supplierId }, include: { rfq: true } });
+      if (!supplierRow) throw new Error('Supplier not found on this RFQ');
+      if (supplierRow.status === 'SENT' || supplierRow.status === 'RESPONDED') throw new Error('Cannot remove a supplier who has already been contacted or responded');
+      await audit(tx, req, { rfqId: supplierRow.rfqId, entityType: 'RFQ', entityId: supplierRow.rfqId, action: 'SUPPLIER_REMOVED', after: { supplierId: supplierRow.supplierId } });
+      return tx.requestForQuotationSupplier.delete({ where: { id: req.params.supplierId } });
+    });
+    return success(res, row, 'Supplier removed from RFQ');
+  } catch (e: any) { return error(res, e.message || 'Failed to remove supplier', 400); }
+}
+
 export async function acknowledgeRfq(req: Request, res: Response) {
   try { const supplier = await prisma.$transaction(async tx => { const existing = await tx.requestForQuotationSupplier.findUnique({ where: { portalToken: req.params.token }, include: { rfq: true, supplier: true } }); if (!existing) throw new Error('Invalid RFQ portal token'); const status = req.body.accepted === false ? 'DECLINED' : 'RESPONDED'; const updated = await tx.requestForQuotationSupplier.update({ where: { id: existing.id }, data: { status, acknowledgedAt: new Date(), respondedAt: new Date(), acknowledgement: req.body.message } }); await auditEvent(tx, req, { companyId: existing.rfq.companyId, rfqId: existing.rfqId, entityType: 'RFQ', entityId: existing.rfqId, action: status === 'DECLINED' ? 'VENDOR_DECLINED' : 'VENDOR_ACKNOWLEDGED', before: { supplierId: existing.supplierId, status: existing.status }, after: { supplierId: existing.supplierId, supplierName: existing.supplier.name, status, message: req.body.message }, message: `${existing.supplier.name} ${status === 'DECLINED' ? 'declined' : 'acknowledged'} RFQ ${existing.rfq.rfqNo}` }); return updated; }); return success(res, supplier, 'RFQ acknowledgement recorded'); }
   catch { return error(res, 'Invalid RFQ portal token', 404); }
