@@ -8,7 +8,7 @@ import { AuthRequest } from '../middleware/auth';
 import { error, paginated, success } from '../utils/response';
 import { enqueueJob } from '../services/platform/job.service';
 import { amendLifecycle, cancelLifecycle, createLifecycle, submitLifecycle } from '../services/platform/documentLifecycle.service';
-import { auditDateRangeWhere, auditPageParams, buildActorMap } from '../utils/auditQuery';
+import { auditDateRangeWhere, auditPageParams, buildActorMap, moduleAuditWhere } from '../utils/auditQuery';
 
 const s3 = new S3Client({ region: process.env.S3_REGION || 'auto', endpoint: process.env.S3_ENDPOINT, forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true', credentials: process.env.S3_ACCESS_KEY_ID ? { accessKeyId: process.env.S3_ACCESS_KEY_ID, secretAccessKey: process.env.S3_SECRET_ACCESS_KEY! } : undefined });
 const bucket = process.env.S3_BUCKET || '';
@@ -117,7 +117,7 @@ export const listAudit = async (req: Request, res: Response) => {
   const where: any = {
     tenantId: tenant(req),
     companyId,
-    ...(moduleName ? { OR: [{ entityType: { startsWith: `${moduleName}:` } }, { entityType: moduleName.toLowerCase() }] } : {}),
+    ...(moduleName ? moduleAuditWhere(moduleName) : {}),
     ...(action ? { action } : {}),
     ...(userId ? { userId } : {}),
     ...(entityId ? { entityId } : {}),

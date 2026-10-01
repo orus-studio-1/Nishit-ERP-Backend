@@ -1,46 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../../lib/prisma';
-import { success, paginated } from '../../utils/response';
+import { success } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { serializeInvoice, serializeMoney } from '../../utils/invoice';
-
-export const getAuditLogs = async (req: Request, res: Response) => {
-  try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 50;
-    const { entityType, entityId, invoiceId, deliveryNoteId, creditNoteId, action, fromDate, toDate, search } = req.query as any;
-    const where: any = {};
-    if (entityType) where.entityType = entityType;
-    if (entityId) where.entityId = entityId;
-    if (invoiceId) where.invoiceId = invoiceId;
-    if (deliveryNoteId) where.deliveryNoteId = deliveryNoteId;
-    if (creditNoteId) where.creditNoteId = creditNoteId;
-    if (action) where.action = action;
-    if (fromDate || toDate) where.createdAt = { ...(fromDate ? { gte: new Date(fromDate) } : {}), ...(toDate ? { lte: new Date(toDate) } : {}) };
-    if (search) where.OR = [
-      { message: { contains: search, mode: 'insensitive' } },
-      { actorEmail: { contains: search, mode: 'insensitive' } },
-      { action: { contains: search, mode: 'insensitive' } },
-    ];
-    const [logs, total] = await Promise.all([
-      prisma.auditLog.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-        include: {
-          invoice: { select: { invoiceNo: true } },
-          deliveryNote: { select: { deliveryNo: true } },
-          creditNote: { select: { creditNoteNo: true } },
-        },
-      }),
-      prisma.auditLog.count({ where }),
-    ]);
-    return paginated(res, logs, total, page, limit);
-  } catch (err: any) {
-    return handlePrismaError(res, err);
-  }
-};
 
 function dateWhere(fromDate?: string, toDate?: string) {
   return fromDate || toDate ? { ...(fromDate ? { gte: new Date(fromDate) } : {}), ...(toDate ? { lte: new Date(toDate) } : {}) } : undefined;
