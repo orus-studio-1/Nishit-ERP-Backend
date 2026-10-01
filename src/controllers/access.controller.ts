@@ -6,20 +6,20 @@ import { error, success } from '../utils/response';
 import { handlePrismaError } from '../utils/prismaError';
 import { ensureCompanyDefaultRoles, ensureSystemPermissions, permissionCatalog } from '../utils/accessControl';
 import { passwordValidationMessage } from '../utils/password';
+import { setAuditContext } from '../middleware/platform';
 
 function companyId(req: Request) {
   return (req as AuthRequest).user?.companyId || null;
 }
 
-async function audit(req: Request, input: any) {
-  const auth = req as AuthRequest;
-  return prisma.accessAuditLog.create({
-    data: {
-      companyId: companyId(req) || undefined,
-      actorId: auth.user?.id,
-      ...input,
-    },
-  }).catch(() => null);
+// Does not write to the database itself -- it hands business context to the mutationAudit
+// middleware, which writes the single audit row for this request.
+function audit(req: Request, input: any) {
+  setAuditContext(req, {
+    entityType: 'ACCESS',
+    entityId: input.targetUserId || input.targetRoleId,
+    ...input,
+  });
 }
 
 export const getAccessCatalog = async (_req: Request, res: Response) => {
@@ -41,7 +41,7 @@ export const getAccessSummary = async (req: Request, res: Response) => {
       prisma.user.count({ where: id ? { companyId: id } : undefined }),
       prisma.accessRole.count({ where: id ? { companyId: id } : undefined }),
       prisma.permission.count(),
-      prisma.accessAuditLog.findMany({ where: id ? { companyId: id } : undefined, take: 10, orderBy: { createdAt: 'desc' } }),
+      prisma.platformAuditLog.findMany({ where: { entityType: 'ACCESS', ...(id ? { companyId: id } : {}) }, take: 10, orderBy: { createdAt: 'desc' } }),
     ]);
     return success(res, { users, roles, permissions, recentAudit: auditLogs });
   } catch (err: any) {
@@ -87,9 +87,7 @@ export const createAccessRole = async (req: Request, res: Response) => {
         ...deniedIds.map((permissionId) => ({ roleId: created.id, permissionId, effect: 'DENY' as const })),
       ];
       if (rows.length) await tx.rolePermission.createMany({ data: rows, skipDuplicates: true });
-      await tx.accessAuditLog.create({
-        data: { companyId: id, actorId: (req as AuthRequest).user?.id, targetRoleId: created.id, action: 'ROLE_CREATE', after: req.body },
-      });
+      setAuditContext(req, { companyId: id, entityType: 'ACCESS', entityId: created.id, targetRoleId: created.id, action: 'ROLE_CREATE', after: req.body });
       return tx.accessRole.findUnique({ where: { id: created.id }, include: { permissions: { include: { permission: true } } } });
     });
     return success(res, role, 'Role created', 201);
@@ -118,9 +116,7 @@ export const updateAccessRole = async (req: Request, res: Response) => {
         ...deniedIds.map((permissionId) => ({ roleId: role.id, permissionId, effect: 'DENY' as const })),
       ];
       if (rows.length) await tx.rolePermission.createMany({ data: rows, skipDuplicates: true });
-      await tx.accessAuditLog.create({
-        data: { companyId: id || undefined, actorId: (req as AuthRequest).user?.id, targetRoleId: role.id, action: 'ROLE_UPDATE', before: role, after: req.body },
-      });
+      setAuditContext(req, { companyId: id || undefined, entityType: 'ACCESS', entityId: role.id, targetRoleId: role.id, action: 'ROLE_UPDATE', before: role, after: req.body });
       return tx.accessRole.findUnique({ where: { id: role.id }, include: { permissions: { include: { permission: true } }, _count: { select: { users: true } } } });
     });
     return success(res, updated, 'Role updated');
@@ -185,9 +181,7 @@ export const updateUserAccess = async (req: Request, res: Response) => {
           },
         });
       }
-      await tx.accessAuditLog.create({
-        data: { companyId: id || undefined, actorId: (req as AuthRequest).user?.id, targetUserId: user.id, action: 'USER_ACCESS_UPDATE', before: user, after: req.body },
-      });
+      setAuditContext(req, { companyId: id || undefined, entityType: 'ACCESS', entityId: user.id, targetUserId: user.id, action: 'USER_ACCESS_UPDATE', before: user, after: req.body });
       return tx.user.findUnique({
         where: { id: user.id },
         include: { accessRoles: { include: { role: true } }, permissionOverrides: { include: { permission: true } }, employee: true },
@@ -219,14 +213,13 @@ export const issueUserPassword = async (req: Request, res: Response) => {
     const hashed = await bcrypt.hash(password, 10);
     const updated = await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: user.id }, data: { password: hashed, isActive: activate ? true : user.isActive, tokenVersion: { increment: 1 } } });
-      await tx.accessAuditLog.create({
-        data: {
-          companyId: id || undefined,
-          actorId: (req as AuthRequest).user?.id,
-          targetUserId: user.id,
-          action: 'USER_PASSWORD_ISSUED',
-          message: `${activate ? 'Issued password and activated login' : 'Issued password'} for ${user.email}`,
-        },
+      setAuditContext(req, {
+        companyId: id || undefined,
+        entityType: 'ACCESS',
+        entityId: user.id,
+        targetUserId: user.id,
+        action: 'USER_PASSWORD_ISSUED',
+        message: `${activate ? 'Issued password and activated login' : 'Issued password'} for ${user.email}`,
       });
       return tx.user.findUnique({
         where: { id: user.id },
@@ -236,21 +229,6 @@ export const issueUserPassword = async (req: Request, res: Response) => {
     if (!updated) return error(res, 'Unable to issue password', 500);
     const { password: _, ...safeUser } = updated;
     return success(res, safeUser, activate ? 'Password issued and login activated' : 'Password issued');
-  } catch (err: any) {
-    return handlePrismaError(res, err);
-  }
-};
-
-export const getAccessAuditLogs = async (req: Request, res: Response) => {
-  try {
-    const id = companyId(req);
-    const logs = await prisma.accessAuditLog.findMany({
-      where: id ? { companyId: id } : undefined,
-      include: { actor: { select: { firstName: true, lastName: true, email: true } } },
-      orderBy: { createdAt: 'desc' },
-      take: 200,
-    });
-    return success(res, logs);
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

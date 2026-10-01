@@ -9,6 +9,8 @@ import { normalizeSalesItems } from './shared';
 import { reserveSalesOrderStock, releaseSalesOrderReservations } from '../../services/inventory/reservation.service';
 import { preserveQuotationArtifact } from '../../services/sales/quotation-artifact.service';
 import { quotationDefaults } from '../../services/sales/quotation-profile.service';
+import { respondPaginated } from '../../utils/pagination';
+import { setAuditContext } from '../../middleware/platform';
 
 const D = Prisma.Decimal;
 const actor = (req: Request) => (req as any).user || {};
@@ -17,8 +19,10 @@ const tenantId = (req: Request) => actor(req).tenantId;
 const code = (prefix: string) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 const addressSnapshot = (customer: any) => ({ address: customer.address, city: customer.city, state: customer.state, country: customer.country, zip: customer.zip, taxId: customer.taxId });
 const json = (value: any) => value == null ? undefined : JSON.parse(JSON.stringify(value));
-async function salesAudit(tx: any, req: Request, entityType: string, entityId: string, action: string, before?: any, after?: any, diff?: any) {
-  return tx.platformAuditLog.create({ data: { tenantId: tenantId(req), companyId: companyId(req), branchId: after?.branchId || before?.branchId, userId: actor(req).id, entityType, entityId, action, before: json(before), after: json(after), diff: json(diff), ip: req.ip, userAgent: req.get('user-agent'), requestId: req.get('x-request-id') } });
+// Does not write to the database itself -- hands business context to the mutationAudit
+// middleware, which writes the single audit row for this request.
+function salesAudit(tx: any, req: Request, entityType: string, entityId: string, action: string, before?: any, after?: any, diff?: any) {
+  setAuditContext(req, { tenantId: tenantId(req), companyId: companyId(req), branchId: after?.branchId || before?.branchId, entityType, entityId, action, before: json(before), after: json(after), diff: json(diff) });
 }
 
 async function creditExposure(tx: any, customerId: string, orderTotal: Prisma.Decimal.Value = 0) {
@@ -43,7 +47,6 @@ async function creditExposure(tx: any, customerId: string, orderTotal: Prisma.De
 
 export async function listEnquiries(req: Request, res: Response) {
   try {
-    const page = Math.max(1, Number(req.query.page) || 1), limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
     const search = String(req.query.search || '').trim();
     const where: any = {
       ...(companyId(req) ? { companyId: companyId(req) } : {}),
@@ -56,8 +59,7 @@ export async function listEnquiries(req: Request, res: Response) {
         { customer: { name: { contains: search, mode: 'insensitive' } } },
       ] } : {}),
     };
-    const [rows, total] = await Promise.all([prisma.salesEnquiry.findMany({ where, include: { customer: true, items: { include: { product: true } }, convertedQuotation: true }, orderBy: { createdAt: 'desc' }, skip: (page - 1) * limit, take: limit }), prisma.salesEnquiry.count({ where })]);
-    return paginated(res, rows, total, page, limit);
+    return respondPaginated(res, prisma.salesEnquiry, req, { where, include: { customer: true, items: { include: { product: true } }, convertedQuotation: true }, orderBy: { createdAt: 'desc' } });
   } catch (e) { return handlePrismaError(res, e); }
 }
 

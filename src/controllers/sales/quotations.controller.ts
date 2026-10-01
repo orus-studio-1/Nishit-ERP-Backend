@@ -6,29 +6,19 @@ import { handlePrismaError } from '../../utils/prismaError';
 import { generateOrderNo, generateQuotationNo } from '../../utils/generate';
 import { normalizeSalesItems } from './shared';
 import { determineSalesTax } from '../../services/sales/tax.service';
+import { respondPaginated } from '../../utils/pagination';
 import { quotationDefaults, quotationGrandTotal } from '../../services/sales/quotation-profile.service';
+import { setAuditContext } from '../../middleware/platform';
 
 export const getQuotations = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { status, customerId, search } = req.query as any;
     const where: any = {};
     if (status) where.status = status;
     if (customerId) where.customerId = customerId;
     if (search) where.quotationNo = { contains: search, mode: 'insensitive' };
 
-    const [items, total] = await Promise.all([
-      prisma.quotation.findMany({
-        where,
-        include: { customer: { select: { name: true, email: true } }, items: { include: { product: true } } },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.quotation.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.quotation, req, { where, include: { customer: { select: { name: true, email: true } }, items: { include: { product: true } } } });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }
@@ -151,7 +141,7 @@ export const updateQuotation = async (req: Request, res: Response) => {
         ...(calculated ? { subtotal, taxAmount, items: { create: calculatedItems } } : {}),
       }, include: { customer: true, items: { include: { product: true } } } });
       const user = (req as any).user || {};
-      await tx.platformAuditLog.create({ data: { tenantId: user.tenantId, companyId: user.companyId, userId: user.id, entityType: 'QUOTATION', entityId: existing.id, action: 'UPDATE_DRAFT', before: JSON.parse(JSON.stringify(existing)), after: JSON.parse(JSON.stringify(updated)), ip: req.ip, userAgent: req.get('user-agent') } });
+      setAuditContext(req, { tenantId: user.tenantId, companyId: user.companyId, userId: user.id, entityType: 'QUOTATION', entityId: existing.id, action: 'UPDATE_DRAFT', before: JSON.parse(JSON.stringify(existing)), after: JSON.parse(JSON.stringify(updated)) });
       return updated;
     });
     return success(res, q, 'Quotation updated');
@@ -172,7 +162,7 @@ export const deleteQuotation = async (req: Request, res: Response) => {
       if (!quotation) throw new Error('Quotation not found');
       if (quotation.status !== 'DRAFT' || quotation.submittedAt) throw new Error('Only an unsubmitted draft quotation can be deleted');
       const user = (req as any).user || {};
-      await tx.platformAuditLog.create({ data: { tenantId: user.tenantId, companyId: user.companyId, userId: user.id, entityType: 'QUOTATION', entityId: quotation.id, action: 'DELETE_DRAFT', before: JSON.parse(JSON.stringify(quotation)), ip: req.ip, userAgent: req.get('user-agent') } });
+      setAuditContext(req, { tenantId: user.tenantId, companyId: user.companyId, userId: user.id, entityType: 'QUOTATION', entityId: quotation.id, action: 'DELETE_DRAFT', before: JSON.parse(JSON.stringify(quotation)) });
       await tx.quotation.delete({ where: { id: quotation.id } });
     });
     return success(res, null, 'Quotation deleted');
@@ -222,7 +212,7 @@ export const convertQuotationToOrder = async (req: Request, res: Response) => {
       include: { customer: true, items: { include: { product: true } } },
     });
       const user = (req as any).user || {};
-      await tx.platformAuditLog.create({ data: { tenantId: user.tenantId, companyId: user.companyId, userId: user.id, entityType: 'SALES_ORDER', entityId: created.id, action: 'CREATE_FROM_ACCEPTED_QUOTATION', after: JSON.parse(JSON.stringify(created)), diff: { quotationId: q.id, revisionNo: q.revisionNo } } });
+      setAuditContext(req, { tenantId: user.tenantId, companyId: user.companyId, userId: user.id, entityType: 'SALES_ORDER', entityId: created.id, action: 'CREATE_FROM_ACCEPTED_QUOTATION', after: JSON.parse(JSON.stringify(created)), diff: { quotationId: q.id, revisionNo: q.revisionNo } });
       return created;
     });
     return success(res, order, 'Quotation converted to sales order');
