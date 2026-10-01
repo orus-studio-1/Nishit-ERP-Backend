@@ -8,6 +8,7 @@ import { AuthRequest } from '../middleware/auth';
 import { error, paginated, success } from '../utils/response';
 import { enqueueJob } from '../services/platform/job.service';
 import { amendLifecycle, cancelLifecycle, createLifecycle, submitLifecycle } from '../services/platform/documentLifecycle.service';
+import { auditDateRangeWhere, auditPageParams, buildActorMap, moduleAuditWhere } from '../utils/auditQuery';
 
 const s3 = new S3Client({ region: process.env.S3_REGION || 'auto', endpoint: process.env.S3_ENDPOINT, forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true', credentials: process.env.S3_ACCESS_KEY_ID ? { accessKeyId: process.env.S3_ACCESS_KEY_ID, secretAccessKey: process.env.S3_SECRET_ACCESS_KEY! } : undefined });
 const bucket = process.env.S3_BUCKET || '';
@@ -106,29 +107,26 @@ export const putSetting = async (req: Request, res: Response) => { const scope =
 
 export const listJobs = async (req: Request, res: Response) => { const page = Math.max(1, Number(req.query.page) || 1); const limit = Math.min(200, Number(req.query.limit) || 25); const where = { tenantId: tenant(req), ...(req.query.status ? { status: String(req.query.status) } : {}) }; const [items, total] = await Promise.all([prisma.backgroundJob.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' } }), prisma.backgroundJob.count({ where })]); return paginated(res, items, total, page, limit); };
 export const listAudit = async (req: Request, res: Response) => {
-  const page = Math.max(1, Number(req.query.page) || 1);
-  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25));
+  const { page, limit } = auditPageParams(req);
   const companyId = auth(req).user!.companyId;
   const moduleName = String(req.query.module || '').trim().toUpperCase();
   const action = String(req.query.action || '').trim().toUpperCase();
   const userId = String(req.query.userId || '').trim();
   const entityId = String(req.query.entityId || '').trim();
-  const from = req.query.from ? new Date(String(req.query.from)) : undefined;
-  const to = req.query.to ? new Date(`${String(req.query.to).slice(0, 10)}T23:59:59.999Z`) : undefined;
+  const createdAt = auditDateRangeWhere(req);
   const where: any = {
     tenantId: tenant(req),
     companyId,
-    ...(moduleName ? { OR: [{ entityType: { startsWith: `${moduleName}:` } }, { entityType: moduleName.toLowerCase() }] } : {}),
+    ...(moduleName ? moduleAuditWhere(moduleName) : {}),
     ...(action ? { action } : {}),
     ...(userId ? { userId } : {}),
     ...(entityId ? { entityId } : {}),
-    ...(from || to ? { createdAt: { ...(from && !Number.isNaN(from.getTime()) ? { gte: from } : {}), ...(to && !Number.isNaN(to.getTime()) ? { lte: to } : {}) } } : {}),
+    ...(createdAt ? { createdAt } : {}),
   };
-  const [items, total, users] = await Promise.all([
+  const [items, total, { users, actors }] = await Promise.all([
     prisma.platformAuditLog.findMany({ where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' } }),
     prisma.platformAuditLog.count({ where }),
-    prisma.user.findMany({ where: { companyId: companyId || undefined }, select: { id: true, firstName: true, lastName: true, email: true, role: true, employee: { select: { employeeId: true } } }, orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }] }),
+    buildActorMap(companyId),
   ]);
-  const actors = new Map(users.map(user => [user.id, user]));
   return success(res, { items: items.map(item => ({ ...item, actor: item.userId ? actors.get(item.userId) || null : null })), total, page, limit, totalPages: Math.ceil(total / limit), users });
 };

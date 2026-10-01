@@ -3,30 +3,22 @@ import prisma from '../../lib/prisma';
 import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { AuthRequest } from '../../middleware/auth';
+import { respondPaginated } from '../../utils/pagination';
 
 export const getProjects = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { status, search } = req.query as any;
     const where: any = {};
     if (status) where.status = status;
     if (search) where.name = { contains: search, mode: 'insensitive' };
 
-    const [items, total] = await Promise.all([
-      prisma.project.findMany({
-        where,
-        include: {
-          members: { include: { project: false } },
-          _count: { select: { tasks: true, milestones: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.project.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.project, req, {
+      where,
+      include: {
+        members: { include: { project: false } },
+        _count: { select: { tasks: true, milestones: true } },
+      },
+    });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

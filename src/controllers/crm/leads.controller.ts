@@ -16,6 +16,7 @@ import {
 } from './shared';
 import { generateCustomerNo } from '../../utils/generate';
 import { crmScopeWhere } from './scope';
+import { respondPaginated } from '../../utils/pagination';
 
 // Keep request-only controls (for example allowDuplicate) and ownership fields
 // out of Prisma writes. This also prevents a newly added UI field from making
@@ -62,8 +63,6 @@ async function ensureCustomerForLead(tx: any, lead: any, contact: any) {
 
 export const getLeads = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { status, source, assignedToId, search, mine } = req.query as any;
     const where: any = await crmScopeWhere(req as AuthRequest, 'LEAD');
     if (status) where.status = status;
@@ -77,22 +76,16 @@ export const getLeads = async (req: Request, res: Response) => {
       { email: { contains: search, mode: 'insensitive' } },
     ];
 
-    const [items, total] = await Promise.all([
-      prisma.lead.findMany({
-        where,
-        include: {
-          organization: true,
-          createdBy: { select: { id: true, firstName: true, lastName: true, email: true } },
-          assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
-          _count: { select: { activities: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.lead.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.lead, req, {
+      where,
+      include: {
+        organization: true,
+        createdBy: { select: { id: true, firstName: true, lastName: true, email: true } },
+        assignedTo: { select: { id: true, firstName: true, lastName: true, email: true } },
+        _count: { select: { activities: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }
@@ -200,6 +193,43 @@ export const deleteLead = async (req: Request, res: Response) => {
   }
 };
 
+async function createOpportunityFromLead(tx: any, req: AuthRequest, lead: any, body: any) {
+  const contact = lead.contacts[0] || await tx.contact.create({
+    data: {
+      leadId: lead.id,
+      firstName: lead.firstName,
+      lastName: lead.lastName,
+      email: lead.email,
+      phone: lead.phone,
+      company: lead.company,
+      city: lead.city,
+      country: lead.country,
+      organizationId: lead.organizationId,
+      notes: lead.notes,
+    },
+  });
+  const customer = await ensureCustomerForLead(tx, lead, contact);
+  const created = await tx.opportunity.create({
+    data: {
+      companyId: req.user?.companyId,
+      branchId: req.user?.branchId,
+      ownerId: lead.assignedToId || req.user!.id,
+      title: body.title || `${lead.firstName} ${lead.lastName} - ${lead.company || 'Opportunity'}`,
+      leadId: lead.id,
+      contactId: contact.id,
+      organizationId: lead.organizationId,
+      customerId: customer.id,
+      value: Number(body.value ?? lead.value ?? 0),
+      currency: body.currency || 'INR',
+      stage: 'QUALIFICATION',
+      probability: Number(body.probability ?? 25),
+      expectedClose: body.expectedClose ? new Date(body.expectedClose) : undefined,
+      notes: body.notes || lead.notes,
+    },
+  });
+  return { contact, customer, opportunity: created };
+}
+
 export const convertLead = async (req: AuthRequest, res: Response) => {
   try {
     const body = req.body || {};
@@ -208,37 +238,7 @@ export const convertLead = async (req: AuthRequest, res: Response) => {
       if (!lead) throw new Error('Lead not found');
       if (lead.status === 'CONVERTED') throw new Error('Lead is already converted');
       if (lead.opportunity) throw new Error('Lead already has an opportunity; use Qualify to complete its conversion');
-      const contact = lead.contacts[0] || await tx.contact.create({
-        data: {
-          leadId: lead.id,
-          firstName: lead.firstName,
-          lastName: lead.lastName,
-          email: lead.email,
-          phone: lead.phone,
-          company: lead.company,
-          organizationId: lead.organizationId,
-          notes: lead.notes,
-        },
-      });
-      const customer = await ensureCustomerForLead(tx, lead, contact);
-      const created = await tx.opportunity.create({
-        data: {
-          companyId: req.user?.companyId,
-          branchId: req.user?.branchId,
-          ownerId: lead.assignedToId || req.user!.id,
-          title: body.title || `${lead.firstName} ${lead.lastName} - ${lead.company || 'Opportunity'}`,
-          leadId: lead.id,
-          contactId: contact.id,
-          organizationId: lead.organizationId,
-          customerId: customer.id,
-          value: Number(body.value ?? lead.value ?? 0),
-          currency: body.currency || 'INR',
-          stage: 'QUALIFICATION',
-          probability: Number(body.probability ?? 25),
-          expectedClose: body.expectedClose ? new Date(body.expectedClose) : undefined,
-          notes: body.notes || lead.notes,
-        },
-      });
+      const { customer, opportunity: created } = await createOpportunityFromLead(tx, req, lead, body);
       await tx.lead.update({ where: { id: lead.id }, data: { status: 'CONVERTED' } });
       await logCrmActivity(tx, req.user!.id, {
         type: 'CONVERSION',
@@ -264,39 +264,7 @@ export const qualifyLead = async (req: AuthRequest, res: Response) => {
       if (!lead) throw new Error('Lead not found');
       if (lead.opportunity) return tx.opportunity.findUnique({ where: { id: lead.opportunity.id }, include: { contact: true, lead: true, organization: true } });
 
-      const contact = lead.contacts[0] || await tx.contact.create({
-        data: {
-          leadId: lead.id,
-          firstName: lead.firstName,
-          lastName: lead.lastName,
-          email: lead.email,
-          phone: lead.phone,
-          company: lead.company,
-          city: lead.city,
-          country: lead.country,
-          organizationId: lead.organizationId,
-          notes: lead.notes,
-        },
-      });
-      const customer = await ensureCustomerForLead(tx, lead, contact);
-      const created = await tx.opportunity.create({
-        data: {
-          companyId: req.user?.companyId,
-          branchId: req.user?.branchId,
-          ownerId: lead.assignedToId || req.user!.id,
-          title: body.title || `${lead.firstName} ${lead.lastName} - ${lead.company || 'Opportunity'}`,
-          leadId: lead.id,
-          contactId: contact.id,
-          organizationId: lead.organizationId,
-          customerId: customer.id,
-          value: Number(body.value ?? lead.value ?? 0),
-          currency: body.currency || 'INR',
-          stage: 'QUALIFICATION',
-          probability: Number(body.probability ?? 25),
-          expectedClose: body.expectedClose ? new Date(body.expectedClose) : undefined,
-          notes: body.notes || lead.notes,
-        },
-      });
+      const { contact, customer, opportunity: created } = await createOpportunityFromLead(tx, req, lead, body);
       await tx.lead.update({ where: { id: lead.id }, data: { status: 'CONVERTED', qualifiedAt: new Date() } });
       await logCrmActivity(tx, req.user!.id, {
         type: 'CONVERSION',

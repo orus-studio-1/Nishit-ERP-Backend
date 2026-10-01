@@ -6,13 +6,12 @@ import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { generateEmployeeId } from '../../utils/generate';
 import { ensureCompanyDefaultRoles } from '../../utils/accessControl';
+import { respondPaginated } from '../../utils/pagination';
 import { AuthRequest } from '../../middleware/auth';
 
 // ---- EMPLOYEES ----
 export const getEmployees = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { departmentId, status, search } = req.query as any;
     const where: any = {};
     if ((req as any).user?.companyId) where.user = { companyId: (req as any).user.companyId };
@@ -24,22 +23,15 @@ export const getEmployees = async (req: Request, res: Response) => {
       { employeeId: { contains: search, mode: 'insensitive' } },
     ];
 
-    const [items, total] = await Promise.all([
-      prisma.employee.findMany({
-        where,
-        include: {
-          user: { select: { firstName: true, lastName: true, email: true, avatar: true } },
-          department: true,
-          position: true,
-          manager: { include: { user: { select: { firstName: true, lastName: true } } } },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.employee.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.employee, req, {
+      where,
+      include: {
+        user: { select: { firstName: true, lastName: true, email: true, avatar: true } },
+        department: true,
+        position: true,
+        manager: { include: { user: { select: { firstName: true, lastName: true } } } },
+      },
+    });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import prisma from '../../lib/prisma';
 import { error, success } from '../../utils/response';
+import { auditEvent } from './shared';
 
 const number = (value: any) => Number(value || 0);
 const user = (req: Request) => (req as any).user || {};
@@ -22,7 +23,7 @@ export async function submitProcurementCaseRfq(req: Request, res: Response) {
         await tx.backgroundJob.create({ data: { tenantId: user(req).tenantId, type: 'PROCUREMENT_RFQ_EMAIL', payload: { rfqId: rfq.id, supplierId: supplierRow.supplierId, to: recipient, token } } });
       }
       const updated = await tx.requestForQuotation.update({ where: { id: rfq.id }, data: { status: 'SENT', submittedAt: new Date(), sentAt: new Date() } });
-      await tx.procurementAuditEvent.create({ data: { companyId: rfq.companyId, rfqId: rfq.id, entityType: 'RFQ', entityId: rfq.id, action: 'SUBMITTED_AND_SENT', actorId: user(req).id, before: { status: rfq.status }, after: { status: 'SENT', suppliers: rfq.suppliers.length } } });
+      await auditEvent(tx, req, { companyId: rfq.companyId, rfqId: rfq.id, entityType: 'RFQ', entityId: rfq.id, action: 'SUBMITTED_AND_SENT', before: { status: rfq.status }, after: { status: 'SENT', suppliers: rfq.suppliers.length } });
       return updated;
     });
     return success(res, result, 'RFQ submitted and supplier emails queued');
@@ -123,7 +124,7 @@ export async function updatePurchaseOrderCommitment(req: Request, res: Response)
         await tx.purchaseOrderItem.update({ where: { id: line.purchaseOrderItemId }, data: { expectedDate: line.expectedDate ? new Date(line.expectedDate) : null } });
       }
       const updated = await tx.purchaseOrder.update({ where: { id: po.id }, data: { expectedDate: req.body.expectedDate ? new Date(req.body.expectedDate) : po.expectedDate, estimatedArrivalAt: req.body.estimatedArrivalAt ? new Date(req.body.estimatedArrivalAt) : po.estimatedArrivalAt, delayReason: req.body.delayReason ?? po.delayReason } });
-      await tx.procurementAuditEvent.create({ data: { companyId: po.companyId, rfqId: po.rfqId, entityType: 'PURCHASE_ORDER', entityId: po.id, action: 'DELIVERY_COMMITMENT_UPDATED', actorId: user(req).id, after: req.body } });
+      await auditEvent(tx, req, { companyId: po.companyId, rfqId: po.rfqId, entityType: 'PURCHASE_ORDER', entityId: po.id, action: 'DELIVERY_COMMITMENT_UPDATED', after: req.body });
       return updated;
     });
     return success(res, row, 'Supplier delivery commitment updated');
@@ -158,7 +159,7 @@ export async function communicatePurchaseOrderDelay(req: Request, res: Response)
     const communication = await prisma.$transaction(async (tx) => {
       const created = await tx.salesCommunication.create({ data: { companyId: order.companyId, entityType: 'ORDER', entityId: order.id, channel: 'EMAIL', direction: 'OUTBOUND', kind: 'SUPPLIER_DELAY', recipient, subject, message, status: 'QUEUED', createdById: user(req).id } });
       await tx.backgroundJob.create({ data: { tenantId: user(req).tenantId, type: 'SALES_COMMUNICATION_SEND', payload: { communicationId: created.id } } });
-      await tx.procurementAuditEvent.create({ data: { companyId: po.companyId, rfqId: po.rfqId, entityType: 'PURCHASE_ORDER', entityId: po.id, action: 'CUSTOMER_DELAY_EMAIL_QUEUED', actorId: user(req).id, after: { salesOrderId: order.id, recipient, subject } } });
+      await auditEvent(tx, req, { companyId: po.companyId, rfqId: po.rfqId, entityType: 'PURCHASE_ORDER', entityId: po.id, action: 'CUSTOMER_DELAY_EMAIL_QUEUED', after: { salesOrderId: order.id, recipient, subject } });
       return created;
     });
     return success(res, communication, 'Customer delay email queued');
@@ -176,7 +177,6 @@ export async function getProcurementCase(req: Request, res: Response) {
         supplierQuotations: { include: { supplier: true, items: { include: { product: true } }, revisions: true, purchaseOrders: true }, orderBy: [{ supplierId: 'asc' }, { revisionNo: 'asc' }] },
         purchaseOrders: { include: { supplier: true, items: { include: { product: true } }, receipts: { include: { items: { include: { product: true, warehouse: true } } } }, invoices: true, communications: true }, orderBy: { createdAt: 'asc' } },
         communications: { include: { supplierQuotation: true, purchaseOrder: true }, orderBy: { sentAt: 'desc' } },
-        auditEvents: { orderBy: { createdAt: 'desc' } },
       },
     });
     if (!rfq) return error(res, 'Procurement case not found', 404);
@@ -190,7 +190,14 @@ export async function getProcurementCase(req: Request, res: Response) {
       : quotes.length ? 'QUOTATIONS'
       : rfq.status === 'SENT' ? 'AWAITING_QUOTES' : 'RFQ_DRAFT';
     const totals = orders.flatMap((order: any) => order.items).reduce((sum: any, item: any) => ({ ordered: sum.ordered + number(item.quantity), accepted: sum.accepted + number(item.acceptedQty), rejected: sum.rejected + number(item.rejectedQty), remaining: sum.remaining + Math.max(0, number(item.quantity) - number(item.acceptedQty) - number(item.shortClosedQty)) }), { ordered: 0, accepted: 0, rejected: 0, remaining: 0 });
-    return success(res, { rfq, stage, quotes, orders, receipts, communications: rfq.communications, auditHistory: rfq.auditEvents, totals });
+    // Business-event audit history for this whole case: the RFQ itself plus every quote and
+    // order under it (auditEvent() writes are keyed by entityId, not by rfqId anymore).
+    const caseEntityIds = [rfq.id, ...quotes.map((quote: any) => quote.id), ...orders.map((order: any) => order.id)];
+    const auditHistory = await prisma.platformAuditLog.findMany({
+      where: { entityId: { in: caseEntityIds }, entityType: { in: ['RFQ', 'PURCHASE_ORDER', 'SUPPLIER_QUOTATION', 'COMMUNICATION', 'SUPPLIER_COMMUNICATION'] } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return success(res, { rfq, stage, quotes, orders, receipts, communications: rfq.communications, auditHistory, totals });
   } catch (e: any) { return error(res, e.message || 'Could not load procurement case', 400); }
 }
 
@@ -214,7 +221,7 @@ export async function updateSupplierQuotationLifecycle(req: Request, res: Respon
       const updated = await tx.supplierQuotation.update({ where: { id: quote.id }, data: { status, selected: status === 'SELECTED' } });
       if (quote.rfqId) {
         if (status === 'SUBMITTED') await tx.requestForQuotation.update({ where: { id: quote.rfqId }, data: { status: 'QUOTED' } });
-        await tx.procurementAuditEvent.create({ data: { companyId: quote.companyId, rfqId: quote.rfqId, entityType: 'SUPPLIER_QUOTATION', entityId: quote.id, action: `QUOTATION_${status}`, actorId: user(req).id, before: { status: quote.status }, after: { status } } });
+        await auditEvent(tx, req, { companyId: quote.companyId, rfqId: quote.rfqId, entityType: 'SUPPLIER_QUOTATION', entityId: quote.id, action: `QUOTATION_${status}`, before: { status: quote.status }, after: { status } });
       }
       return updated;
     });
@@ -237,7 +244,7 @@ export async function addProcurementCaseCommunication(req: Request, res: Respons
     const communication = await prisma.$transaction(async (tx) => {
       const created = await tx.supplierCommunicationLog.create({ data: { companyId: rfq.companyId, rfqId: rfq.id, supplierId: req.body.supplierId || undefined, supplierQuotationId: req.body.supplierQuotationId || undefined, purchaseOrderId: req.body.purchaseOrderId || undefined, channel, direction, kind: req.body.kind || 'NEGOTIATION', recipient: recipient || undefined, subject: req.body.subject || undefined, message, status: shouldSend ? 'QUEUED' : 'LOGGED', queuedAt: shouldSend ? new Date() : undefined, sentAt: new Date(), createdById: user(req).id } });
       if (shouldSend) await tx.backgroundJob.create({ data: { tenantId: user(req).tenantId, type: 'PROCUREMENT_FOLLOWUP_EMAIL', payload: { communicationId: created.id, to: recipient } } });
-      await tx.procurementAuditEvent.create({ data: { companyId: rfq.companyId, rfqId: rfq.id, entityType: 'COMMUNICATION', entityId: created.id, action: shouldSend ? 'EMAIL_QUEUED' : 'COMMUNICATION_LOGGED', actorId: user(req).id, after: { channel, direction, supplierId: req.body.supplierId, recipient, kind: req.body.kind || 'NEGOTIATION' } } });
+      await auditEvent(tx, req, { companyId: rfq.companyId, rfqId: rfq.id, entityType: 'COMMUNICATION', entityId: created.id, action: shouldSend ? 'EMAIL_QUEUED' : 'COMMUNICATION_LOGGED', after: { channel, direction, supplierId: req.body.supplierId, recipient, kind: req.body.kind || 'NEGOTIATION' } });
       return created;
     });
     return success(res, communication, shouldSend ? 'Supplier email queued and recorded' : 'Communication recorded', 201);
@@ -276,7 +283,7 @@ export async function createSupplierWorkspaceCommunication(req: Request, res: Re
     const communication = await prisma.$transaction(async tx => {
       const created = await tx.supplierCommunicationLog.create({ data: { companyId: supplier.companyId, supplierId: supplier.id, rfqId: req.body.rfqId || undefined, supplierQuotationId: req.body.supplierQuotationId || undefined, purchaseOrderId: req.body.purchaseOrderId || undefined, channel, direction, kind: req.body.kind || 'GENERAL', recipient: recipient || undefined, subject: req.body.subject || undefined, message, status: send ? 'QUEUED' : 'LOGGED', queuedAt: send ? new Date() : undefined, sentAt: req.body.occurredAt ? new Date(req.body.occurredAt) : new Date(), createdById: user(req).id } });
       if (send) await tx.backgroundJob.create({ data: { tenantId: user(req).tenantId, type: 'PROCUREMENT_FOLLOWUP_EMAIL', payload: { communicationId: created.id, to: recipient } } });
-      await tx.procurementAuditEvent.create({ data: { companyId: supplier.companyId, rfqId: req.body.rfqId || undefined, entityType: 'SUPPLIER_COMMUNICATION', entityId: created.id, action: send ? 'EMAIL_QUEUED' : `${direction}_${channel}_LOGGED`, actorId: user(req).id, after: { supplierId: supplier.id, kind: req.body.kind || 'GENERAL', recipient, purchaseOrderId: req.body.purchaseOrderId } } });
+      await auditEvent(tx, req, { companyId: supplier.companyId, rfqId: req.body.rfqId || undefined, entityType: 'SUPPLIER_COMMUNICATION', entityId: created.id, action: send ? 'EMAIL_QUEUED' : `${direction}_${channel}_LOGGED`, after: { supplierId: supplier.id, kind: req.body.kind || 'GENERAL', recipient, purchaseOrderId: req.body.purchaseOrderId } });
       return created;
     });
     return success(res, communication, send ? 'Supplier email queued and recorded' : 'Supplier communication recorded', 201);

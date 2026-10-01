@@ -3,11 +3,10 @@ import prisma from '../../lib/prisma';
 import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { AuthRequest } from '../../middleware/auth';
+import { respondPaginated } from '../../utils/pagination';
 
 export const getTasks = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 50;
     const { projectId, status, assigneeId, priority } = req.query as any;
     const where: any = { parentId: null };
     if (projectId) where.projectId = projectId;
@@ -15,22 +14,16 @@ export const getTasks = async (req: Request, res: Response) => {
     if (assigneeId) where.assigneeId = assigneeId;
     if (priority) where.priority = priority;
 
-    const [items, total] = await Promise.all([
-      prisma.task.findMany({
-        where,
-        include: {
-          assignee: { select: { firstName: true, lastName: true, avatar: true } },
-          creator: { select: { firstName: true, lastName: true } },
-          subtasks: { include: { assignee: { select: { firstName: true, lastName: true } } } },
-          _count: { select: { comments: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.task.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.task, req, {
+      where,
+      include: {
+        assignee: { select: { firstName: true, lastName: true, avatar: true } },
+        creator: { select: { firstName: true, lastName: true } },
+        subtasks: { include: { assignee: { select: { firstName: true, lastName: true } } } },
+        _count: { select: { comments: true } },
+      },
+      defaultLimit: 50,
+    });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

@@ -3,6 +3,7 @@ import prisma from '../../lib/prisma';
 import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { AuthRequest } from '../../middleware/auth';
+import { paginateQuery } from '../../utils/pagination';
 
 const include = {
   assignTo: { select: { id: true, firstName: true, lastName: true, email: true } },
@@ -114,19 +115,13 @@ function matchesRule(rule: any, sample: any) {
 
 export const getAssignmentRules = async (req: AuthRequest, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 50;
     const where = companyWhere(req);
-    const [items, total] = await Promise.all([
-      prisma.crmAssignmentRule.findMany({
-        where,
-        include,
-        orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.crmAssignmentRule.count({ where }),
-    ]);
+    const { items, total, page, limit } = await paginateQuery(prisma.crmAssignmentRule, req, {
+      where,
+      include,
+      orderBy: [{ priority: 'asc' }, { createdAt: 'desc' }],
+      defaultLimit: 50,
+    });
     return paginated(res, await withImpact(items, req.user?.companyId), total, page, limit);
   } catch (err: any) {
     return handlePrismaError(res, err);

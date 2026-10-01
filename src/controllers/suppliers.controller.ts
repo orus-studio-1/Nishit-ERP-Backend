@@ -4,6 +4,7 @@ import { success, paginated, error } from '../utils/response';
 import { handlePrismaError } from '../utils/prismaError';
 import { generateSupplierNo } from '../utils/generate';
 import { pickDefined } from '../utils/payload';
+import { respondPaginated } from '../utils/pagination';
 
 const supplierFields = [
   'name', 'email', 'phone', 'address', 'city', 'state', 'country', 'zip', 'taxId', 'currency',
@@ -14,8 +15,6 @@ const supplierFields = [
 
 export const getSuppliers = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { search, isActive } = req.query as any;
     const where: any = {};
     if (isActive !== undefined) where.isActive = isActive === 'true';
@@ -25,17 +24,7 @@ export const getSuppliers = async (req: Request, res: Response) => {
       { supplierNo: { contains: search, mode: 'insensitive' } },
     ];
 
-    const [items, total] = await Promise.all([
-      prisma.supplier.findMany({
-        where,
-        include: { _count: { select: { purchaseOrders: true, invoices: true } } },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.supplier.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.supplier, req, { where, include: { _count: { select: { purchaseOrders: true, invoices: true } } } });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

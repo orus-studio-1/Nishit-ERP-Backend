@@ -1,0 +1,13 @@
+Drop legacy audit tables and remove now-unused per-module endpoints
+
+- Fix the Module filter's entityType matching (auditQuery.ts's moduleAuditWhere,
+  used by platform.controller.ts's listAudit) so business-event rows written with
+  a bare entityType (PURCHASE_ORDER, SALES_INVOICE, ACCESS, ...) are found under
+  their owning module, not just the automatic "MODULE:RESOURCE" rows -- this must
+  land before the per-module endpoints below are removed, or their data becomes
+  unreachable through the central audit trail
+- Drop AuditLog, ProcurementAuditEvent and AccessAuditLog now that every write
+  and read path added in the previous PR uses PlatformAuditLog instead
+- Remove the now-dead procurement/invoicing/access dedicated audit endpoints and
+  routes (getProcurementAuditTrail, getAuditLogs, getAccessAuditLogs) -- the
+  central /audit-trail page with the Module filter covers all of them
