@@ -114,7 +114,6 @@ export const invoiceInclude = {
   taxes: true,
   payments: { orderBy: { date: 'desc' as const } },
   paymentAllocations: { include: { paymentEntry: { select: { id: true, paymentNo: true, date: true, method: true, reference: true } } } },
-  auditLogs: { orderBy: { createdAt: 'desc' as const }, take: 30 },
 };
 
 export async function postInvoiceLedger(tx: any, invoice: any, isReversal = false) {
