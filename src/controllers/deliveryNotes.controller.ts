@@ -27,7 +27,6 @@ const deliveryInclude = {
   warehouse: { select: { id: true, name: true, code: true } },
   items: { include: { product: { select: { id: true, sku: true, name: true, type: true } }, warehouse: { select: { id: true, name: true, code: true } } } },
   invoices: { select: { id: true, invoiceNo: true, status: true, paymentStatus: true, grandTotal: true } },
-  auditLogs: { orderBy: { createdAt: 'desc' as const }, take: 30 },
 };
 
 function serializeDelivery(note: any) {
