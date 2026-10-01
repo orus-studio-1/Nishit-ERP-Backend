@@ -8,28 +8,17 @@ import { normalizeSalesItems } from './shared';
 import { releaseSalesOrderReservations, reserveSalesOrderStock } from '../../services/inventory/reservation.service';
 import { refreshSalesOrderProgress } from '../../services/sales/salesOrder.service';
 import { determineSalesTax } from '../../services/sales/tax.service';
+import { respondPaginated } from '../../utils/pagination';
 
 export const getSalesOrders = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { status, customerId, search } = req.query as any;
     const where: any = {};
     if (status) where.status = status;
     if (customerId) where.customerId = customerId;
     if (search) where.orderNo = { contains: search, mode: 'insensitive' };
 
-    const [items, total] = await Promise.all([
-      prisma.salesOrder.findMany({
-        where,
-        include: { customer: { select: { name: true, email: true } }, items: { include: { product: true } } },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.salesOrder.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.salesOrder, req, { where, include: { customer: { select: { name: true, email: true } }, items: { include: { product: true } } } });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

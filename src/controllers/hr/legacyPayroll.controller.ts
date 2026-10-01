@@ -2,11 +2,10 @@ import { Request, Response } from 'express';
 import prisma from '../../lib/prisma';
 import { success, paginated } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
+import { respondPaginated } from '../../utils/pagination';
 
 export const getPayrolls = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { month, year, status, employeeId } = req.query as any;
     const where: any = { employee: { user: { companyId: (req as any).user?.companyId || '__missing_company__' } } };
     if (month) where.month = parseInt(month);
@@ -14,20 +13,14 @@ export const getPayrolls = async (req: Request, res: Response) => {
     if (status) where.status = status;
     if (employeeId) where.employeeId = employeeId;
 
-    const [items, total] = await Promise.all([
-      prisma.payroll.findMany({
-        where,
-        include: {
-          employee: { include: { user: { select: { firstName: true, lastName: true } } } },
-          items: true,
-        },
-        orderBy: [{ year: 'desc' }, { month: 'desc' }],
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.payroll.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.payroll, req, {
+      where,
+      include: {
+        employee: { include: { user: { select: { firstName: true, lastName: true } } } },
+        items: true,
+      },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

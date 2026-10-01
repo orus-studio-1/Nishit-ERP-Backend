@@ -3,6 +3,7 @@ import prisma from '../../lib/prisma';
 import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { postStockLedger, postStockTransfer } from '../../services/inventory/stockLedger.service';
+import { respondPaginated } from '../../utils/pagination';
 
 async function resolveBatchAndSerial(tx: any, item: any, warehouseId: string) {
   let batchId = item.batchId || undefined;
@@ -30,25 +31,13 @@ async function resolveBatchAndSerial(tx: any, item: any, warehouseId: string) {
 
 export const getStockMovements = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { productId, warehouseId, type } = req.query as any;
     const where: any = {};
     if (productId) where.productId = productId;
     if (warehouseId) where.warehouseId = warehouseId;
     if (type) where.type = type;
 
-    const [items, total] = await Promise.all([
-      prisma.stockMovement.findMany({
-        where,
-        include: { product: { select: { name: true, sku: true } }, warehouse: { select: { name: true } } },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.stockMovement.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.stockMovement, req, { where, include: { product: { select: { name: true, sku: true } }, warehouse: { select: { name: true } } } });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

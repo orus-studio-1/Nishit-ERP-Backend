@@ -5,11 +5,10 @@ import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { serializeMoney } from '../../utils/invoice';
 import { nextDocumentNo, postPaymentLedger, recalculateInvoicePayment } from './shared';
+import { paginateQuery } from '../../utils/pagination';
 
 export const getPayments = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { customerId, invoiceId, method, fromDate, toDate } = req.query as any;
     const where: any = {};
     if (customerId) where.customerId = customerId;
@@ -17,16 +16,7 @@ export const getPayments = async (req: Request, res: Response) => {
     if (method) where.method = method;
     if (fromDate || toDate) where.date = { ...(fromDate ? { gte: new Date(fromDate) } : {}), ...(toDate ? { lte: new Date(toDate) } : {}) };
 
-    const [items, total] = await Promise.all([
-      prisma.payment.findMany({
-        where,
-        include: { customer: { select: { name: true } }, invoice: { select: { invoiceNo: true } } },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.payment.count({ where }),
-    ]);
+    const { items, total, page, limit } = await paginateQuery(prisma.payment, req, { where, include: { customer: { select: { name: true } }, invoice: { select: { invoiceNo: true } } } });
     return paginated(res, items.map((payment: any) => ({ ...payment, amount: serializeMoney(payment.amount) })), total, page, limit);
   } catch (err: any) {
     return handlePrismaError(res, err);

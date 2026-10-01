@@ -6,6 +6,7 @@ import { handlePrismaError } from '../utils/prismaError';
 import { generateJournalNo } from '../utils/generate';
 import { postToLedger, reverseLedgerForVoucher } from '../services/accounting/ledger.service';
 import { pickDefined } from '../utils/payload';
+import { respondPaginated } from '../utils/pagination';
 import { withRowLock } from '../utils/withRowLock';
 
 function lineTotals(lines: any[] = []) {
@@ -129,8 +130,6 @@ export const deleteAccount = async (req: Request, res: Response) => {
 // ---- JOURNAL ENTRIES ----
 export const getJournalEntries = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { status, search } = req.query as any;
     const where: any = {};
     if (status) where.status = status;
@@ -139,17 +138,7 @@ export const getJournalEntries = async (req: Request, res: Response) => {
       { description: { contains: search, mode: 'insensitive' } },
     ];
 
-    const [items, total] = await Promise.all([
-      prisma.journalEntry.findMany({
-        where,
-        include: { lines: { include: { debitAccount: true, creditAccount: true } } },
-        orderBy: { date: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.journalEntry.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.journalEntry, req, { where, include: { lines: { include: { debitAccount: true, creditAccount: true } } }, orderBy: { date: 'desc' } });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }
@@ -348,8 +337,6 @@ export const createBudget = async (req: Request, res: Response) => {
 
 export const getGLEntries = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 50;
     const { accountId, fromDate, toDate, voucherType, partyType, partyId, costCenterId } = req.query as any;
     const where: any = {};
     if (accountId) where.accountId = accountId;
@@ -358,11 +345,7 @@ export const getGLEntries = async (req: Request, res: Response) => {
     if (partyId) where.partyId = partyId;
     if (costCenterId) where.costCenterId = costCenterId;
     if (fromDate || toDate) where.postingDate = { ...(fromDate ? { gte: new Date(fromDate) } : {}), ...(toDate ? { lte: new Date(toDate) } : {}) };
-    const [items, total] = await Promise.all([
-      prisma.generalLedgerEntry.findMany({ where, include: { account: true, costCenter: true }, orderBy: [{ postingDate: 'desc' }, { createdAt: 'desc' }], skip: (page - 1) * limit, take: limit }),
-      prisma.generalLedgerEntry.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.generalLedgerEntry, req, { where, include: { account: true, costCenter: true }, orderBy: [{ postingDate: 'desc' }, { createdAt: 'desc' }], defaultLimit: 50 });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

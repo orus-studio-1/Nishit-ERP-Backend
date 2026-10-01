@@ -4,11 +4,10 @@ import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { pickDefined } from '../../utils/payload';
 import { AuthRequest } from '../../middleware/auth';
+import { respondPaginated } from '../../utils/pagination';
 
 export const getOrganizations = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { search } = req.query as any;
     const where: any = { isActive: true, companyId: (req as AuthRequest).user?.companyId || '__missing_company__' };
     if (search) where.OR = [
@@ -16,17 +15,11 @@ export const getOrganizations = async (req: Request, res: Response) => {
       { industry: { contains: search, mode: 'insensitive' } },
       { email: { contains: search, mode: 'insensitive' } },
     ];
-    const [items, total] = await Promise.all([
-      prisma.crmOrganization.findMany({
-        where,
-        include: { owner: { select: { firstName: true, lastName: true } }, _count: { select: { leads: true, contacts: true, opportunities: true } } },
-        orderBy: { updatedAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.crmOrganization.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.crmOrganization, req, {
+      where,
+      include: { owner: { select: { firstName: true, lastName: true } }, _count: { select: { leads: true, contacts: true, opportunities: true } } },
+      orderBy: { updatedAt: 'desc' },
+    });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }

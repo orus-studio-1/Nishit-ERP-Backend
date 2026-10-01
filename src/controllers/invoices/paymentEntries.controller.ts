@@ -6,25 +6,15 @@ import { handlePrismaError } from '../../utils/prismaError';
 import { audit, recalculateInvoiceAllocations } from '../../utils/erp';
 import { nextDocumentNo, postPaymentEntryLedger, serializePaymentEntry } from './shared';
 import { closeSalesOrderWhenSettled } from '../../services/sales/salesOrder.service';
+import { paginateQuery } from '../../utils/pagination';
 
 export const getPaymentEntries = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { customerId, status } = req.query as any;
     const where: any = {};
     if (customerId) where.customerId = customerId;
     if (status) where.status = status;
-    const [items, total] = await Promise.all([
-      prisma.paymentEntry.findMany({
-        where,
-        include: { customer: { select: { name: true } }, allocations: { include: { invoice: { select: { invoiceNo: true, grandTotal: true, outstandingAmount: true } }, creditNote: { select: { creditNoteNo: true } } } } },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.paymentEntry.count({ where }),
-    ]);
+    const { items, total, page, limit } = await paginateQuery(prisma.paymentEntry, req, { where, include: { customer: { select: { name: true } }, allocations: { include: { invoice: { select: { invoiceNo: true, grandTotal: true, outstandingAmount: true } }, creditNote: { select: { creditNoteNo: true } } } } } });
     return paginated(res, items.map(serializePaymentEntry), total, page, limit);
   } catch (err: any) {
     return handlePrismaError(res, err);

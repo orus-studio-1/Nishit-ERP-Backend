@@ -5,13 +5,12 @@ import { handlePrismaError } from '../utils/prismaError';
 import { generateCustomerNo } from '../utils/generate';
 import { serializeInvoice, serializeMoney } from '../utils/invoice';
 import { pickDefined } from '../utils/payload';
+import { paginateQuery, respondPaginated } from '../utils/pagination';
 
 const customerFields = ['name', 'email', 'phone', 'contactId', 'address', 'city', 'state', 'country', 'zip', 'taxId', 'currency', 'creditLimit', 'paymentTerms', 'notes', 'isActive'] as const;
 
 export const getCustomers = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { search, isActive } = req.query as any;
     const where: any = {};
     if (isActive !== undefined) where.isActive = isActive === 'true';
@@ -21,17 +20,7 @@ export const getCustomers = async (req: Request, res: Response) => {
       { customerNo: { contains: search, mode: 'insensitive' } },
     ];
 
-    const [items, total] = await Promise.all([
-      prisma.customer.findMany({
-        where,
-        include: { _count: { select: { salesOrders: true, invoices: true } } },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.customer.count({ where }),
-    ]);
-    return paginated(res, items, total, page, limit);
+    return respondPaginated(res, prisma.customer, req, { where, include: { _count: { select: { salesOrders: true, invoices: true } } } });
   } catch (err: any) {
     return handlePrismaError(res, err);
   }
@@ -84,8 +73,6 @@ export const deleteCustomer = async (req: Request, res: Response) => {
 
 export const getCustomerInvoices = async (req: Request, res: Response) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
     const { status, fromDate, toDate } = req.query as any;
     const where: any = { customerId: req.params.id };
     if (status) {
@@ -97,16 +84,7 @@ export const getCustomerInvoices = async (req: Request, res: Response) => {
     }
     if (fromDate || toDate) where.date = { ...(fromDate ? { gte: new Date(fromDate) } : {}), ...(toDate ? { lte: new Date(toDate) } : {}) };
 
-    const [items, total] = await Promise.all([
-      prisma.salesInvoice.findMany({
-        where,
-        include: { customer: { select: { id: true, name: true, email: true } }, items: true, payments: true },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      prisma.salesInvoice.count({ where }),
-    ]);
+    const { items, total, page, limit } = await paginateQuery(prisma.salesInvoice, req, { where, include: { customer: { select: { id: true, name: true, email: true } }, items: true, payments: true } });
     return paginated(res, items.map((invoice: any) => {
       const serialized = serializeInvoice(invoice);
       if (serialized.status === 'SUBMITTED') serialized.status = serialized.paymentStatus === 'UNPAID' ? 'SENT' : serialized.paymentStatus;
