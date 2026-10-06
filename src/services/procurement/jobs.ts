@@ -1,6 +1,7 @@
 import prisma from '../../lib/prisma';
 import { registerJobHandler } from '../platform/job.service';
 import { sendSystemMail } from '../platform/mail.service';
+import { loadRfqDocument, rfqEmail, rfqPdf } from './rfq-document.service';
 
 function pdf(lines: string[]) {
   const escape = (v: string) => v.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
@@ -12,17 +13,18 @@ function pdf(lines: string[]) {
   return Buffer.from(out);
 }
 
-async function send(to: string, subject: string, text: string, attachment: Buffer, filename: string) {
+async function send(to: string, subject: string, text: string, attachment: Buffer, filename: string, html?: string) {
   if (!to) throw new Error('Vendor email address is missing');
-  return sendSystemMail({ to, subject, text, attachments: [{ filename, contentType: 'application/pdf', content: attachment }] });
+  return sendSystemMail({ to, subject, text, html, attachments: [{ filename, contentType: 'application/pdf', content: attachment }] });
 }
 
-registerJobHandler('PROCUREMENT_RFQ_EMAIL', async ({ rfqId, supplierId, to, token, communicationId }) => {
-  const row = await prisma.requestForQuotation.findUnique({ where: { id: rfqId }, include: { items: { include: { product: true } } } });
-  if (!row) throw new Error('RFQ not found');
-  const document = pdf([`Request for quotation ${row.rfqNo}`, ...row.items.map(i => `${i.product.sku}  Qty ${i.quantity}`), `Respond with vendor token: ${token}`]);
-  const communication = communicationId ? await prisma.supplierCommunicationLog.findUnique({ where: { id: communicationId } }) : await prisma.supplierCommunicationLog.create({ data: { companyId: row.companyId, rfqId: row.id, supplierId, channel: 'EMAIL', direction: 'OUTBOUND', kind: 'RFQ_SENT', recipient: to, subject: `RFQ ${row.rfqNo}`, message: `Please acknowledge and submit your quotation. Vendor token: ${token}`, status: 'QUEUED', queuedAt: new Date() } });
-  try { const result = await send(to, communication.subject || `RFQ ${row.rfqNo}`, communication.message, document, `${row.rfqNo}.pdf`); await prisma.supplierCommunicationLog.update({ where: { id: communication.id }, data: { status: 'SENT', deliveredAt: new Date(), failedAt: null, failureReason: null } }); return result; }
+registerJobHandler('PROCUREMENT_RFQ_EMAIL', async ({ rfqId, supplierId, to, communicationId }) => {
+  const data = await loadRfqDocument(rfqId, supplierId);
+  const { rfq: row } = data;
+  const document = await rfqPdf(data);
+  const email = rfqEmail(data);
+  const communication = communicationId ? await prisma.supplierCommunicationLog.findUnique({ where: { id: communicationId } }) : await prisma.supplierCommunicationLog.create({ data: { companyId: row.companyId, rfqId: row.id, supplierId, channel: 'EMAIL', direction: 'OUTBOUND', kind: 'RFQ_SENT', recipient: to, subject: email.subject, message: email.text, status: 'QUEUED', queuedAt: new Date() } });
+  try { const result = await send(to, communication.subject || email.subject, email.text, document, `RFQ-${row.rfqNo}.pdf`, email.html); await prisma.supplierCommunicationLog.update({ where: { id: communication.id }, data: { status: 'SENT', deliveredAt: new Date(), failedAt: null, failureReason: null } }); return result; }
   catch (error: any) { await prisma.supplierCommunicationLog.update({ where: { id: communication.id }, data: { status: 'FAILED', failedAt: new Date(), failureReason: error.message || 'RFQ email failed' } }); throw error; }
 });
 
