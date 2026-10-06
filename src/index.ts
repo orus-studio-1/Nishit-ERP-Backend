@@ -45,6 +45,10 @@ import { processSalesCommitmentAlerts, processSalesExpiry, processSalesInvoiceMo
 import { processInventoryMonitoring } from './services/inventory/jobs';
 import { processProcurementMonitoring } from './services/procurement/jobs';
 
+// Tally integration is opt-in: its routes are only mounted when ENABLE_TALLY=true, so a deployment
+// that does not use Tally (for example production) exposes no Tally endpoint at all.
+const tallyEnabled = process.env.ENABLE_TALLY === 'true';
+
 const app = express();
 app.set('trust proxy', 1);
 
@@ -129,8 +133,8 @@ app.use('/api/suppliers', suppliersRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/incentives', incentiveRoutes);
-app.use('/api/tally', tallyRoutes);
-app.use('/api/tally/agent', tallyAgentRoutes);
+if (tallyEnabled) app.use('/api/tally', tallyRoutes);
+if (tallyEnabled) app.use('/api/tally/agent', tallyAgentRoutes);
 
 // Versioned API is canonical. Legacy /api mounts remain during client migration.
 app.use('/api/v1/auth', authRoutes);
@@ -154,8 +158,8 @@ app.use('/api/v1/suppliers', suppliersRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/incentives', incentiveRoutes);
-app.use('/api/v1/tally', tallyRoutes);
-app.use('/api/v1/tally/agent', tallyAgentRoutes);
+if (tallyEnabled) app.use('/api/v1/tally', tallyRoutes);
+if (tallyEnabled) app.use('/api/v1/tally/agent', tallyAgentRoutes);
 app.use('/api/v1/platform', platformRoutes);
 
 app.get('/health', (req, res) => {
