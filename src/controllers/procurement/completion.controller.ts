@@ -95,7 +95,7 @@ export async function inviteSupplierToRfq(req: Request, res: Response) {
       if (alreadySent && recipient) {
         await tx.backgroundJob.create({ data: { tenantId: tenantId(req), type: 'PROCUREMENT_RFQ_EMAIL', payload: { rfqId: rfq.id, supplierId, to: recipient, token } } });
       }
-      await audit(tx, req, { rfqId: rfq.id, entityType: 'RFQ', entityId: rfq.id, action: 'SUPPLIER_INVITED', after: { supplierId, supplierName: supplier.name, emailQueued: alreadySent } });
+      await auditEvent(tx, req, { rfqId: rfq.id, entityType: 'RFQ', entityId: rfq.id, action: 'SUPPLIER_INVITED', after: { supplierId, supplierName: supplier.name, emailQueued: alreadySent } });
       return invited;
     });
     return success(res, row, 'Supplier invited to RFQ', 201);
@@ -109,7 +109,7 @@ export async function removeRfqSupplier(req: Request, res: Response) {
       const supplierRow = await tx.requestForQuotationSupplier.findUnique({ where: { id: req.params.supplierId }, include: { rfq: true } });
       if (!supplierRow) throw new Error('Supplier not found on this RFQ');
       if (supplierRow.status === 'SENT' || supplierRow.status === 'RESPONDED') throw new Error('Cannot remove a supplier who has already been contacted or responded');
-      await audit(tx, req, { rfqId: supplierRow.rfqId, entityType: 'RFQ', entityId: supplierRow.rfqId, action: 'SUPPLIER_REMOVED', after: { supplierId: supplierRow.supplierId } });
+      await auditEvent(tx, req, { rfqId: supplierRow.rfqId, entityType: 'RFQ', entityId: supplierRow.rfqId, action: 'SUPPLIER_REMOVED', after: { supplierId: supplierRow.supplierId } });
       return tx.requestForQuotationSupplier.delete({ where: { id: req.params.supplierId } });
     });
     return success(res, row, 'Supplier removed from RFQ');
