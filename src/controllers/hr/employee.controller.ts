@@ -7,6 +7,7 @@ import { handlePrismaError } from '../../utils/prismaError';
 import { generateEmployeeId } from '../../utils/generate';
 import { ensureCompanyDefaultRoles } from '../../utils/accessControl';
 import { respondPaginated } from '../../utils/pagination';
+import { passwordValidationMessage } from '../../utils/password';
 import { AuthRequest } from '../../middleware/auth';
 
 // ---- EMPLOYEES ----
@@ -68,6 +69,7 @@ export const createEmployee = async (req: Request, res: Response) => {
     const email = String(req.body.email || '').trim().toLowerCase();
     if (!email) return error(res, 'Email is required', 400);
     if (!firstName || !lastName) return error(res, 'First name and last name are required', 400);
+    if (password) { const invalidPassword = passwordValidationMessage(password); if (invalidPassword) return error(res, invalidPassword, 400, undefined, 'VALIDATION_ERROR'); }
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) return error(res, 'This email is already registered. Use a different email, or edit the existing user access instead of creating a new employee.', 400);
