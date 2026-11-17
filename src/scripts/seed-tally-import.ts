@@ -746,7 +746,10 @@ async function main() {
   if (!company) throw new Error(`Company "${args.company}" not found`);
   console.log(`Company: ${company.name} (${company.slug}, id ${company.id})`);
 
-  await runWithTenant({ tenantId: company.tenantId, companyId: company.id, userId: 'tally-import' }, async () => {
+  // Use the same branch context as the website (the company's first active branch), so customer,
+  // supplier and other numbers come from the same numbering series the website uses.
+  const branch = await prisma.branch.findFirst({ where: { companyId: company.id, isActive: true }, orderBy: { createdAt: 'asc' } });
+  await runWithTenant({ tenantId: company.tenantId, companyId: company.id, branchId: branch?.id, userId: 'tally-import' }, async () => {
     if (args.steps.has('masters')) await importMasters(company.id, company.tenantId, master, args.dryRun);
     if (args.steps.has('stock')) await importOpeningStock(company.id, master, args.stockDate, args.dryRun);
     if (args.steps.has('movements')) await importOpeningMovements(company.id, args.stockDate, args.dryRun);
