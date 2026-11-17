@@ -6,6 +6,7 @@ import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth';
 import { error, paginated, success } from '../utils/response';
+import { handlePrismaError } from '../utils/prismaError';
 import { enqueueJob } from '../services/platform/job.service';
 import { amendLifecycle, cancelLifecycle, createLifecycle, submitLifecycle } from '../services/platform/documentLifecycle.service';
 import { auditDateRangeWhere, auditPageParams, buildActorMap, moduleAuditWhere } from '../utils/auditQuery';
@@ -18,8 +19,42 @@ const tenant = (req: Request) => auth(req).user!.tenantId!;
 
 export const getTenant = async (req: Request, res: Response) => success(res, await prisma.tenant.findUnique({ where: { id: tenant(req) }, include: { companies: { include: { branches: true, gstRegistrations: true } } } }));
 export const updateTenant = async (req: Request, res: Response) => { const { name, dataRegion, baseCurrency, timezone } = req.body; return success(res, await prisma.tenant.update({ where: { id: tenant(req) }, data: { name, dataRegion, baseCurrency, timezone } }), 'Tenant updated'); };
-export const createBranch = async (req: Request, res: Response) => { const company = await prisma.company.findFirst({ where: { id: req.params.companyId, tenantId: tenant(req) } }); if (!company) return error(res, 'Company not found', 404, undefined, 'COMPANY_NOT_FOUND'); return success(res, await prisma.branch.create({ data: { tenantId: tenant(req), companyId: company.id, code: req.body.code, name: req.body.name, gstin: req.body.gstin, address: req.body.address, isManufacturing: Boolean(req.body.isManufacturing) } }), 'Branch created', 201); };
-export const createGstin = async (req: Request, res: Response) => { const company = await prisma.company.findFirst({ where: { id: req.params.companyId, tenantId: tenant(req) } }); if (!company) return error(res, 'Company not found', 404, undefined, 'COMPANY_NOT_FOUND'); return success(res, await prisma.companyGstin.create({ data: { tenantId: tenant(req), companyId: company.id, stateCode: req.body.stateCode, gstin: req.body.gstin, legalName: req.body.legalName, address: req.body.address, isDefault: Boolean(req.body.isDefault) } }), 'GST registration created', 201); };
+export const createBranch = async (req: Request, res: Response) => {
+  try {
+    const company = await prisma.company.findFirst({ where: { id: req.params.companyId, tenantId: tenant(req) } });
+    if (!company) return error(res, 'Company not found', 404, undefined, 'COMPANY_NOT_FOUND');
+    const code = String(req.body.code || '').trim().toUpperCase();
+    const name = String(req.body.name || '').trim();
+    const gstin = req.body.gstin ? String(req.body.gstin).trim().toUpperCase() : undefined;
+    if (!code || !name) return error(res, 'Branch code and name are required', 400, undefined, 'VALIDATION_ERROR');
+    if (gstin && !GSTIN_PATTERN.test(gstin)) return error(res, 'Branch GSTIN is not valid. A GSTIN has 15 characters, for example 27ABCDE1234F1Z5.', 400, undefined, 'GSTIN_INVALID');
+    if (await prisma.branch.findFirst({ where: { tenantId: tenant(req), companyId: company.id, code } })) return error(res, `A branch with code ${code} already exists`, 409, undefined, 'BRANCH_CODE_EXISTS');
+    return success(res, await prisma.branch.create({ data: { tenantId: tenant(req), companyId: company.id, code, name, gstin, address: req.body.address, isManufacturing: Boolean(req.body.isManufacturing) } }), 'Branch created', 201);
+  } catch (err) { return handlePrismaError(res, err); }
+};
+// 2-digit state code, 10-character PAN, entity number, "Z", check character.
+const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+export const createGstin = async (req: Request, res: Response) => {
+  try {
+    const company = await prisma.company.findFirst({ where: { id: req.params.companyId, tenantId: tenant(req) } });
+    if (!company) return error(res, 'Company not found', 404, undefined, 'COMPANY_NOT_FOUND');
+    const stateCode = String(req.body.stateCode || '').trim().padStart(2, '0');
+    const gstin = String(req.body.gstin || '').trim().toUpperCase();
+    if (!/^[0-9]{2}$/.test(stateCode) || stateCode === '00') return error(res, 'Enter a valid 2-digit state code, for example 27 for Maharashtra', 400, undefined, 'STATE_CODE_INVALID');
+    if (!GSTIN_PATTERN.test(gstin)) return error(res, 'GSTIN is not valid. A GSTIN has 15 characters, for example 27ABCDE1234F1Z5.', 400, undefined, 'GSTIN_INVALID');
+    if (gstin.slice(0, 2) !== stateCode) return error(res, `GSTIN ${gstin} belongs to state code ${gstin.slice(0, 2)}, not ${stateCode}. The first two digits of a GSTIN are its state code.`, 400, undefined, 'GSTIN_STATE_MISMATCH');
+    if (await prisma.companyGstin.findFirst({ where: { tenantId: tenant(req), gstin } })) return error(res, `GSTIN ${gstin} is already registered`, 409, undefined, 'GSTIN_EXISTS');
+    if (await prisma.companyGstin.findFirst({ where: { companyId: company.id, stateCode } })) return error(res, `A GST registration for state code ${stateCode} already exists. A company can have one registration per state.`, 409, undefined, 'GST_STATE_EXISTS');
+    const isFirst = (await prisma.companyGstin.count({ where: { companyId: company.id } })) === 0;
+    const isDefault = Boolean(req.body.isDefault) || isFirst;
+    const created = await prisma.$transaction(async (tx: any) => {
+      if (isDefault) await tx.companyGstin.updateMany({ where: { companyId: company.id, isDefault: true }, data: { isDefault: false } });
+      return tx.companyGstin.create({ data: { tenantId: tenant(req), companyId: company.id, stateCode, gstin, legalName: req.body.legalName ? String(req.body.legalName).trim() : undefined, address: req.body.address, isDefault } });
+    });
+    return success(res, created, 'GST registration created', 201);
+  } catch (err) { return handlePrismaError(res, err); }
+};
 
 const quotationImage = (value: unknown, label: string) => {
   if (value == null || value === '') return null;

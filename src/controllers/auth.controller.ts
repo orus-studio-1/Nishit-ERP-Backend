@@ -12,6 +12,8 @@ import { AuthRequest } from '../middleware/auth';
 import { computeEffectiveAccess, ensureCompanyDefaultRoles } from '../utils/accessControl';
 import { generateEmployeeId } from '../utils/generate';
 import { passwordValidationMessage } from '../utils/password';
+import { runWithTenant } from '../utils/tenant';
+import { ADMIN_REVOKE_REASONS, afterSessionsRevoked, revokeAllUserSessions } from '../utils/sessions';
 
 const REFRESH_COOKIE = 'nishit_refresh';
 const LEGACY_REFRESH_COOKIE = 'orus_refresh';
@@ -90,12 +92,19 @@ export const register = async (req: Request, res: Response) => {
       if (isFirstUser && !company.ownerId) await tx.company.update({ where: { id: company.id }, data: { ownerId: user.id } });
       await tx.tenantMembership.create({ data: { tenantId: tenant.id, userId: user.id, isOwner: isFirstUser } });
       await tx.companyMembership.create({ data: { tenantId: tenant.id, companyId: company.id, userId: user.id, defaultBranchId: branch.id } });
+      // Self-registered users get the same Employee record HR would create, in the same
+      // transaction, so a user can never exist without one. The number comes from the
+      // company's own EMPLOYEE series (the same one HR → Employees uses), which needs the
+      // company context because this request is unauthenticated.
+      await runWithTenant({ tenantId: tenant.id, companyId: company.id, branchId: branch.id }, async () => {
+        const employeeId = await generateEmployeeId(tx);
+        await tx.employee.create({ data: { employeeId, userId: user.id, hireDate: new Date(), salary: 0, salaryType: 'MONTHLY', status: 'ACTIVE', companyEmail: email, branch: branch.name } });
+      });
+      const roles = await ensureCompanyDefaultRoles(company.id, tx);
+      const accessRole = isFirstUser ? roles.SUPER_ADMIN : roles.EMPLOYEE_SELF_SERVICE;
+      await tx.userAccessRole.create({ data: { userId: user.id, roleId: accessRole.id, assignedById: user.id } });
       return { tenant, company, branch, role, user: await tx.user.findUnique({ where: { id: user.id }, include: { company: true } }) };
-    });
-    await prisma.employee.create({ data: { employeeId: await generateEmployeeId(), userId: created.user.id, hireDate: new Date(), salary: 0, salaryType: 'MONTHLY', status: 'ACTIVE', companyEmail: email } }).catch(() => null);
-    const roles = await ensureCompanyDefaultRoles(created.company.id);
-    const accessRole = created.role === 'SUPER_ADMIN' ? roles.SUPER_ADMIN : roles.EMPLOYEE_SELF_SERVICE;
-    await prisma.userAccessRole.upsert({ where: { userId_roleId: { userId: created.user.id, roleId: accessRole.id } }, update: {}, create: { userId: created.user.id, roleId: accessRole.id, assignedById: created.user.id } });
+    }, { timeout: 30000 });
     const context = { tenantId: created.tenant.id, companyId: created.company.id, branchId: created.branch.id };
     setRefresh(res, await makeRefresh(req, created.user.id, context));
     return success(res, await makePayload(created.user, context), 'Account created successfully', 201);
@@ -143,6 +152,23 @@ export const refresh = async (req: Request, res: Response) => {
     const hash = sha256(raw);
     const session = await prisma.refreshSession.findUnique({ where: { tokenHash: hash }, include: { user: true } });
     if (!session || session.expiresAt <= new Date()) return error(res, 'Refresh session expired', 401, undefined, 'REFRESH_EXPIRED');
+    // An administrator changed this user's access (or reset their password / deactivated them),
+    // or the user signed out everywhere. Covers the 30s rotation grace window too, by checking the
+    // whole token family rather than just this token.
+    if (session.revokedAt) {
+      const adminRevoked = await prisma.refreshSession.findFirst({ where: { familyId: session.familyId, revokeReason: { in: [...ADMIN_REVOKE_REASONS, 'LOGOUT_ALL', 'PASSWORD_CHANGED'] } }, select: { revokeReason: true } });
+      if (adminRevoked) {
+        res.clearCookie(REFRESH_COOKIE, cookieOptions);
+        const message = adminRevoked.revokeReason === 'ACCESS_CHANGED'
+          ? 'Your access was updated by an administrator. Please sign in again.'
+          : adminRevoked.revokeReason === 'PASSWORD_RESET'
+            ? 'Your password was reset. Please sign in with your new password.'
+            : adminRevoked.revokeReason === 'DEACTIVATED'
+              ? 'Your account has been deactivated. Contact your administrator.'
+              : 'You have been signed out. Please sign in again.';
+        return error(res, message, 401, undefined, 'SESSION_REVOKED');
+      }
+    }
     const isRecentRotation = session.revokedAt && session.revokeReason === 'ROTATED' && session.lastUsedAt && session.lastUsedAt > new Date(Date.now() - 30_000);
     if (session.revokedAt && !isRecentRotation) {
       await prisma.refreshSession.updateMany({ where: { familyId: session.familyId, revokedAt: null }, data: { revokedAt: new Date(), revokeReason: 'REUSE_DETECTED' } });
@@ -195,7 +221,7 @@ export const refresh = async (req: Request, res: Response) => {
 };
 
 export const logout = async (req: AuthRequest, res: Response) => { const raw = req.cookies?.[REFRESH_COOKIE]; if (raw) await prisma.refreshSession.updateMany({ where: { tokenHash: sha256(raw), revokedAt: null }, data: { revokedAt: new Date(), revokeReason: 'LOGOUT' } }); res.clearCookie(REFRESH_COOKIE, cookieOptions); res.clearCookie(LEGACY_REFRESH_COOKIE, cookieOptions); return success(res, null, 'Logged out'); };
-export const logoutAll = async (req: AuthRequest, res: Response) => { await prisma.$transaction([prisma.refreshSession.updateMany({ where: { userId: req.user!.id, revokedAt: null }, data: { revokedAt: new Date(), revokeReason: 'LOGOUT_ALL' } }), prisma.user.update({ where: { id: req.user!.id }, data: { tokenVersion: { increment: 1 } } })]); res.clearCookie(REFRESH_COOKIE, cookieOptions); res.clearCookie(LEGACY_REFRESH_COOKIE, cookieOptions); return success(res, null, 'All sessions revoked'); };
+export const logoutAll = async (req: AuthRequest, res: Response) => { await prisma.$transaction([prisma.refreshSession.updateMany({ where: { userId: req.user!.id, revokedAt: null }, data: { revokedAt: new Date(), revokeReason: 'LOGOUT_ALL' } }), prisma.user.update({ where: { id: req.user!.id }, data: { tokenVersion: { increment: 1 } } })]); await afterSessionsRevoked(); res.clearCookie(REFRESH_COOKIE, cookieOptions); res.clearCookie(LEGACY_REFRESH_COOKIE, cookieOptions); return success(res, null, 'All sessions revoked'); };
 
 export const forgotPassword = async (req: Request, res: Response) => { const user = await prisma.user.findFirst({ where: { email: { equals: String(req.body.email || '').trim().toLowerCase(), mode: 'insensitive' } } }); let resetToken: string | undefined; if (user) { resetToken = randomToken(); await prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash: sha256(resetToken), expiresAt: new Date(Date.now() + 15 * 60000) } }); } return success(res, process.env.NODE_ENV === 'production' ? null : { resetToken }, 'If the account exists, reset instructions have been issued'); };
 export const resetPassword = async (req: Request, res: Response) => { const invalid = passwordValidationMessage(req.body.password); if (invalid) return error(res, invalid, 400, undefined, 'VALIDATION_ERROR'); const row = await prisma.passwordResetToken.findUnique({ where: { tokenHash: sha256(String(req.body.token || '')) } }); if (!row || row.consumedAt || row.expiresAt <= new Date()) return error(res, 'Reset token is invalid or expired', 400, undefined, 'RESET_TOKEN_INVALID'); await prisma.$transaction([prisma.user.update({ where: { id: row.userId }, data: { password: await hashPassword(req.body.password), passwordChangedAt: new Date(), tokenVersion: { increment: 1 } } }), prisma.passwordResetToken.update({ where: { id: row.id }, data: { consumedAt: new Date() } }), prisma.refreshSession.updateMany({ where: { userId: row.userId, revokedAt: null }, data: { revokedAt: new Date(), revokeReason: 'PASSWORD_RESET' } })]); return success(res, null, 'Password reset; all sessions revoked'); };

@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import prisma from '../../lib/prisma';
-import { success, error } from '../../utils/response';
+import { success, error, paginated } from '../../utils/response';
+import { paginateQuery } from '../../utils/pagination';
 import { handlePrismaError } from '../../utils/prismaError';
 
 export const getStockBalanceReport = async (req: Request, res: Response) => {
@@ -40,13 +41,12 @@ export const getStockLedgerReport = async (req: Request, res: Response) => {
     if (warehouseId) where.warehouseId = warehouseId;
     if (voucherType) where.voucherType = voucherType;
     if (fromDate || toDate) where.postingDate = { ...(fromDate ? { gte: new Date(fromDate) } : {}), ...(toDate ? { lte: new Date(toDate) } : {}) };
-    const rows = await prisma.stockLedgerEntry.findMany({
+    const { items, total, page, limit } = await paginateQuery(prisma.stockLedgerEntry, req, {
       where,
       include: { product: { select: { sku: true, name: true } }, warehouse: { select: { name: true, code: true } } },
       orderBy: [{ postingDate: 'desc' }, { createdAt: 'desc' }],
-      take: 500,
     });
-    return success(res, rows);
+    return paginated(res, items, total, page, limit);
   } catch (err: any) {
     return handlePrismaError(res, err);
   }
@@ -55,10 +55,9 @@ export const getStockLedgerReport = async (req: Request, res: Response) => {
 export const getProjectedStockReport = async (_req: Request, res: Response) => {
   try {
     const products = await prisma.product.findMany({
-      where: { isActive: true, type: 'PRODUCT' },
+      where: { isActive: true, type: 'PRODUCT', stockLevels: { some: {} } },
       include: { stockLevels: { include: { warehouse: true } }, salesOrderItems: { include: { salesOrder: true } } },
       orderBy: { name: 'asc' },
-      take: 500,
     });
     const rows = products.flatMap((product: any) => product.stockLevels.map((level: any) => {
       const openDemand = product.salesOrderItems

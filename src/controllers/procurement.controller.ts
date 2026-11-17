@@ -466,7 +466,16 @@ export const updateLandedCostVoucherStatus = async (req: Request, res: Response)
   } catch (err: any) { return handlePrismaError(res, err); }
 };
 
-export const getPurchaseInvoices = async (req: Request, res: Response) => list(res, 'purchaseInvoice', req, req.query.status ? { status: req.query.status } : {}, purchaseInvoiceInclude);
+export const getPurchaseInvoices = async (req: Request, res: Response) => {
+  const { status, search } = req.query as any;
+  const where: any = status ? { status } : {};
+  if (search) where.OR = [
+    { invoiceNo: { contains: search, mode: 'insensitive' } },
+    { supplierInvoiceNo: { contains: search, mode: 'insensitive' } },
+    { supplier: { name: { contains: search, mode: 'insensitive' } } },
+  ];
+  return list(res, 'purchaseInvoice', req, where, purchaseInvoiceInclude);
+};
 export const createPurchaseInvoice = async (req: Request, res: Response) => {
   try {
     const settings = await buyingSettings();

@@ -71,8 +71,15 @@ export const authorize = (...roles: string[]) =>
       next();
       return;
     }
+    // The fine-grained permission gate (requireModuleAccess / requirePermission) already checked
+    // this exact module, resource and action against the user's access roles and overrides, so
+    // what an admin grants in Access Control is honoured even if the legacy role column is stale.
+    if (req.permissionGatePassed) {
+      next();
+      return;
+    }
     if (!req.user || !roles.includes(req.user.role)) {
-      error(res, 'Insufficient permissions', 403);
+      error(res, 'You do not have permission to perform this action. Ask an administrator to grant access in Access Control.', 403, undefined, 'INSUFFICIENT_PERMISSIONS');
       return;
     }
     next();

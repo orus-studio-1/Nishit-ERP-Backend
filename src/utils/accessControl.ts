@@ -213,3 +213,24 @@ export function hasPermission(access: EffectiveAccess | undefined, module: strin
   }
   return allowed.has(exact) || allowed.has(manage) || allowed.has(moduleManage);
 }
+
+// Older parts of the app still read the legacy User.role column (route guards, "employees see
+// only their own leave", alert recipients). Access Control assigns access roles, so the column is
+// derived from them whenever access roles change. Highest-ranked match wins.
+const LEGACY_ROLE_RANK = ['SUPER_ADMIN', 'ADMIN', 'HR_MANAGER', 'ACCOUNTANT', 'PURCHASE_MANAGER', 'MANAGER', 'HR_OFFICER', 'PAYROLL_OFFICER', 'SALES_REP', 'EMPLOYEE'] as const;
+export type LegacyRole = typeof LEGACY_ROLE_RANK[number];
+const ACCESS_ROLE_TO_LEGACY: Record<string, LegacyRole> = {
+  SALES_MANAGER: 'MANAGER',
+  INVENTORY_MANAGER: 'MANAGER',
+  PROJECT_MANAGER: 'MANAGER',
+  EMPLOYEE_SELF_SERVICE: 'EMPLOYEE',
+};
+export function legacyRoleForAccessRoles(roles: Array<{ name: string; isSuperAdmin?: boolean | null }>): LegacyRole {
+  const candidates = roles.map((role) => {
+    if (role.isSuperAdmin) return 'SUPER_ADMIN';
+    const name = String(role.name || '').toUpperCase();
+    if (ACCESS_ROLE_TO_LEGACY[name]) return ACCESS_ROLE_TO_LEGACY[name];
+    return (LEGACY_ROLE_RANK as readonly string[]).includes(name) ? name as LegacyRole : 'EMPLOYEE';
+  });
+  return LEGACY_ROLE_RANK.find((rank) => candidates.includes(rank)) || 'EMPLOYEE';
+}
