@@ -4,7 +4,7 @@ import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth';
 import { error, success } from '../utils/response';
 import { handlePrismaError } from '../utils/prismaError';
-import { ensureCompanyDefaultRoles, ensureSystemPermissions, permissionCatalog } from '../utils/accessControl';
+import { ensureCompanyDefaultRoles, ensureSystemPermissions, legacyRoleForAccessRoles, permissionCatalog } from '../utils/accessControl';
 import { passwordValidationMessage } from '../utils/password';
 import { setAuditContext } from '../middleware/platform';
 import { afterSessionsRevoked, revokeAllUserSessions } from '../utils/sessions';
@@ -230,7 +230,8 @@ export const updateUserAccess = async (req: Request, res: Response) => {
     ].filter(Boolean).join('; ');
 
     const updated = await prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: user.id }, data: { isActive: nextIsActive } });
+      // Keep the legacy role column in step with the access roles (see legacyRoleForAccessRoles).
+      await tx.user.update({ where: { id: user.id }, data: { isActive: nextIsActive, role: legacyRoleForAccessRoles(selectedRoles) } });
       if (accessChanged) await revokeAllUserSessions(user.id, nextIsActive ? 'ACCESS_CHANGED' : 'DEACTIVATED', tx);
       await tx.userAccessRole.deleteMany({ where: { userId: user.id } });
       for (const roleId of uniqueRoleIds) {

@@ -5,7 +5,7 @@ import prisma from '../../lib/prisma';
 import { success, paginated, error } from '../../utils/response';
 import { handlePrismaError } from '../../utils/prismaError';
 import { generateEmployeeId } from '../../utils/generate';
-import { ensureCompanyDefaultRoles } from '../../utils/accessControl';
+import { ensureCompanyDefaultRoles, legacyRoleForAccessRoles } from '../../utils/accessControl';
 import { respondPaginated } from '../../utils/pagination';
 import { passwordValidationMessage } from '../../utils/password';
 import { AuthRequest } from '../../middleware/auth';
@@ -98,6 +98,9 @@ export const createEmployee = async (req: Request, res: Response) => {
       for (const accessRoleId of uniqueRoleIds) {
         await tx.userAccessRole.create({ data: { userId: user.id, roleId: accessRoleId as string, assignedById: (req as any).user?.id } });
       }
+      const assignedRoles = await tx.accessRole.findMany({ where: { id: { in: uniqueRoleIds as string[] } }, select: { name: true, isSuperAdmin: true } });
+      const legacyRole = legacyRoleForAccessRoles(assignedRoles);
+      if (legacyRole !== 'EMPLOYEE') await tx.user.update({ where: { id: user.id }, data: { role: legacyRole } });
       const emp = await tx.employee.create({
         data: {
           employeeId, userId: user.id, departmentId, positionId, managerId,
