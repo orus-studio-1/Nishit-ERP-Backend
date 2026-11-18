@@ -168,8 +168,20 @@ export async function createTransferOrder(req: Request, res: Response) {
         if (!serial || serial.productId !== product.id || serial.warehouseId !== sourceWarehouseId || serial.status !== 'AVAILABLE') return error(res, `Selected serial is not available in the source warehouse for ${product.sku}`, 400);
       }
     }
-    const crossPlant = Boolean(source.plantId && destination.plantId && source.plantId !== destination.plantId);
-    if (crossPlant && !req.body.transitWarehouseId) return error(res, 'Across-plant transfer requires a goods-in-transit warehouse', 400);
+    const crossPlant = Boolean(
+      (source.plantId && destination.plantId && source.plantId !== destination.plantId)
+      || (source.branchId && destination.branchId && source.branchId !== destination.branchId),
+    );
+    if (crossPlant) {
+      if (!req.body.transitWarehouseId) return error(res, 'Across-plant transfer requires a goods-in-transit warehouse', 400);
+      const transitWarehouse = await prisma.warehouse.findUnique({ where: { id: req.body.transitWarehouseId } });
+      if (!transitWarehouse?.isActive || transitWarehouse.stockType !== 'GOODS_IN_TRANSIT') {
+        return error(res, 'Select an active warehouse configured for Goods in Transit', 400);
+      }
+      if ([sourceWarehouseId, destinationWarehouseId].includes(transitWarehouse.id)) {
+        return error(res, 'Transit warehouse must differ from source and destination warehouses', 400);
+      }
+    }
     const row = await prisma.stockTransferOrder.create({ data: { transferNo: number('TO'), companyId: companyId(req), sourceWarehouseId, destinationWarehouseId, transitWarehouseId: req.body.transitWarehouseId || undefined, crossPlant, transporter: req.body.transporter || undefined, vehicleNo: req.body.vehicleNo || undefined, trackingReference: req.body.trackingReference || undefined, notes: req.body.notes || undefined, items: { create: items.map((i: any) => ({ productId: i.productId, quantity: new D(i.quantity), valuationRate: new D(i.valuationRate || 0), batchId: i.batchId || undefined, serialNoId: i.serialNoId || undefined })) } }, include: transferInclude });
     return success(res, row, 'Transfer order created', 201);
   } catch (e: any) { return error(res, e.message || 'Could not create transfer', 400); }
