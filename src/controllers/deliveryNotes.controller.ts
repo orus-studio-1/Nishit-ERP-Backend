@@ -194,7 +194,7 @@ export const createAndDispatchFromSalesOrder = async (req: Request, res: Respons
         if (!warehouseId) throw new Error(`Select a warehouse for ${item.product.sku}`);
         const warehouse = await tx.warehouse.findFirst({ where: { id: warehouseId, isActive: true } });
         if (!warehouse) throw new Error(`Selected warehouse for ${item.product.sku} is unavailable`);
-        if (item.product.type === 'PRODUCT' && item.product.maintainStock !== false && !item.product.allowNegativeStock) {
+        if (item.product.type === 'PRODUCT' && item.product.maintainStock !== false) {
           const [level, ownReservations] = await Promise.all([tx.stockLevel.findUnique({ where: { productId_warehouseId: { productId: item.productId, warehouseId } } }), tx.stockReservation.aggregate({ where: { salesOrderId: order.id, salesOrderItemId: item.id, warehouseId, status: { in: ['ACTIVE', 'PARTIAL'] } }, _sum: { reservedQty: true, fulfilledQty: true } })]);
           const ownReserved = new Prisma.Decimal(ownReservations._sum.reservedQty || 0).minus(ownReservations._sum.fulfilledQty || 0);
           const usable = new Prisma.Decimal(level?.quantity || 0).minus(level?.reservedQty || 0).plus(ownReserved);
@@ -207,7 +207,7 @@ export const createAndDispatchFromSalesOrder = async (req: Request, res: Respons
       const uniqueWarehouses = [...new Set(lines.map(line => line.warehouseId))];
       const created = await tx.deliveryNote.create({ data: { deliveryNo, companyId: order.companyId, customerId: order.customerId, salesOrderId: order.id, warehouseId: uniqueWarehouses.length === 1 ? uniqueWarehouses[0] : null, date: new Date(), postingDate: new Date(), status: 'SUBMITTED', submittedAt: new Date(), shipmentStatus: 'DISPATCHED', dispatchedAt: new Date(), transporter: req.body.transporter, trackingNo: req.body.trackingNo, expectedDeliveryAt: req.body.expectedDeliveryAt ? new Date(req.body.expectedDeliveryAt) : undefined, notes: req.body.notes || order.notes, items: { create: lines.map(line => ({ salesOrderItemId: line.salesOrderItemId, productId: line.productId, warehouseId: line.warehouseId, itemCode: line.itemCode, description: line.description, quantity: line.quantity })) } }, include: deliveryInclude });
       for (const line of lines) {
-        await postStockOut(tx, [{ ...line, deliveryNoteId: created.id }], deliveryNo, `Partial dispatch for ${order.orderNo}`, line.warehouseId);
+        await postStockOut(tx, [{ ...line, deliveryNoteId: created.id }], deliveryNo, `Partial dispatch for ${order.orderNo}`, line.warehouseId, false, order.id);
         await fulfillSalesOrderReservation(tx, order.id, line.productId, line.warehouseId, line.quantity);
         const source = order.items.find(item => item.id === line.salesOrderItemId)!;
         const totalDispatched = source.dispatchedQty.plus(line.quantity);
@@ -239,7 +239,7 @@ export const updateDeliveryNoteStatus = async (req: Request, res: Response) => {
       if (!existing) throw new Error('Delivery note not found');
       if (status === 'SUBMITTED') {
         if (existing.status !== 'DRAFT') throw new Error('Only draft delivery notes can be submitted');
-        for (const item of existing.items) await postStockOut(tx, [item], existing.deliveryNo, 'Stock issued from delivery note', item.warehouseId || existing.warehouseId || undefined);
+        for (const item of existing.items) await postStockOut(tx, [item], existing.deliveryNo, 'Stock issued from delivery note', item.warehouseId || existing.warehouseId || undefined, false, existing.salesOrderId || undefined);
         const warehouseId = existing.warehouseId || (await tx.warehouse.findFirst({ where: { isActive: true }, orderBy: { createdAt: 'asc' } }))?.id;
         if (existing.salesOrderId && warehouseId) {
           for (const item of existing.items) {

@@ -80,6 +80,8 @@ export async function postStockLedger(tx: Tx, input: {
   batchId?: string;
   serialNoId?: string;
   reversalOfId?: string;
+  enforceAvailableStock?: boolean;
+  reservationSalesOrderId?: string;
 }) {
   const warehouse = await defaultWarehouse(tx, input.warehouseId);
   const product = await tx.product.findUnique({ where: { id: input.productId } });
@@ -107,6 +109,26 @@ export async function postStockLedger(tx: Tx, input: {
     if (batch.expiryDate && batch.expiryDate <= new Date()) throw new Error(`Expired batch cannot be issued for ${product.sku || product.name}`);
   }
   const before = await stockSnapshot(tx, input.productId, warehouse.id);
+  if (actualQty.lt(0) && input.enforceAvailableStock) {
+    let ownReservedQty = new D(0);
+    if (input.reservationSalesOrderId) {
+      const ownReservations = await tx.stockReservation.aggregate({
+        where: {
+          salesOrderId: input.reservationSalesOrderId,
+          productId: input.productId,
+          warehouseId: warehouse.id,
+          status: { in: ['ACTIVE', 'PARTIAL'] },
+        },
+        _sum: { reservedQty: true, fulfilledQty: true },
+      });
+      ownReservedQty = new D(ownReservations._sum.reservedQty || 0)
+        .minus(ownReservations._sum.fulfilledQty || 0);
+    }
+    const dispatchableQty = before.quantity.minus(before.reservedQty).plus(ownReservedQty);
+    if (actualQty.abs().gt(dispatchableQty)) {
+      throw new Error(`Insufficient available stock for ${product.sku || product.name} in ${warehouse.name}. Available to issue: ${Prisma.Decimal.max(0, dispatchableQty)}`);
+    }
+  }
   const afterQty = before.quantity.plus(actualQty);
   if (afterQty.lt(0) && (!product.allowNegativeStock || product.hasBatchNo || product.hasSerialNo)) {
     throw new Error(`Insufficient stock for ${product.sku || product.name} in ${warehouse.name}`);

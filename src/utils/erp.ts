@@ -43,7 +43,7 @@ export async function defaultWarehouse(tx: any, warehouseId?: string) {
   return tx.warehouse.create({ data: { name: 'Main Warehouse', code: 'MAIN', isActive: true } });
 }
 
-export async function postStockOut(tx: any, items: any[], reference: string, notes: string, warehouseId?: string, isReversal = false) {
+export async function postStockOut(tx: any, items: any[], reference: string, notes: string, warehouseId?: string, isReversal = false, reservationSalesOrderId?: string) {
   const warehouse = await defaultWarehouse(tx, warehouseId);
   const multiplier = isReversal ? 1 : -1;
   for (const item of items) {
@@ -63,6 +63,8 @@ export async function postStockOut(tx: any, items: any[], reference: string, not
       remarks: notes,
       batchId: item.batchId,
       serialNoId: item.serialNoId,
+      enforceAvailableStock: !isReversal,
+      reservationSalesOrderId,
     });
     await tx.stockMovement.create({
       data: {

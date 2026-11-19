@@ -24,7 +24,7 @@ export const updateInvoiceStatus = async (req: Request, res: Response) => {
         });
         if (claimed.count !== 1) throw new Error('Invoice is already being submitted or is no longer a draft');
         await resolveAndSnapshotInvoiceTaxes(tx, existing.id, existing);
-        if (!existing.deliveryNoteId) await postStockOut(tx, existing.items, existing.invoiceNo, 'Stock issued from submitted sales invoice');
+        if (!existing.deliveryNoteId) await postStockOut(tx, existing.items, existing.invoiceNo, 'Stock issued from submitted sales invoice', undefined, false, existing.salesOrderId || undefined);
         if (existing.salesOrderId) await markSalesOrderBilled(tx, existing.salesOrderId, existing.items);
         await postInvoiceLedger(tx, existing);
         await audit(tx, req, { entityType: 'SALES_INVOICE', entityId: existing.id, invoiceId: existing.id, action: 'SUBMIT', statusBefore: existing.status, statusAfter: 'SUBMITTED', message: `Submitted ${existing.invoiceNo}` });
